@@ -1,8 +1,9 @@
 import * as React from 'react'
 import type { CSSProperties, HTMLAttributes, ReactNode } from 'react'
-import { createContext, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import type {
+  DragCancelEvent,
   DragEndEvent,
   DragOverEvent,
   DragStartEvent,
@@ -40,7 +41,7 @@ import { cn } from '@/lib/utils'
 
 // Stable module-level constants — never recreated, won't trigger dnd-kit effects
 const measuringConfig = {
-  droppable: { strategy: MeasuringStrategy.Always }
+  droppable: { strategy: MeasuringStrategy.BeforeDragging }
 }
 
 const pointerActivationConstraint = { distance: 10 }
@@ -73,7 +74,7 @@ const ColumnContext = createContext<{
   attributes: DraggableAttributes
   listeners: DraggableSyntheticListeners | undefined
   isDragging?: boolean
-  disabled?: boolean
+  disabled?: boolean | KanbanDisable
 }>({
   attributes: {} as DraggableAttributes,
   listeners: undefined,
@@ -84,7 +85,7 @@ const ColumnContext = createContext<{
 const ItemContext = createContext<{
   listeners: DraggableSyntheticListeners | undefined
   isDragging?: boolean
-  disabled?: boolean
+  disabled?: boolean | KanbanDisable
 }>({
   listeners: undefined,
   isDragging: false,
@@ -92,6 +93,12 @@ const ItemContext = createContext<{
 })
 
 const IsOverlayContext = createContext(false)
+
+/**
+ * Drag-veto state, event-driven. `vetoed`: the hovered container would refuse the drop.
+ * `draggedCardId`: numeric id of the currently dragged card (null when none / a column is dragged).
+ */
+const VetoContext = createContext<{ vetoed: boolean; draggedCardId: number | null }>({ vetoed: false, draggedCardId: null })
 
 const animateLayoutChanges: AnimateLayoutChanges = args => defaultAnimateLayoutChanges({ ...args, wasDragging: true })
 
@@ -106,12 +113,18 @@ const dropAnimationConfig: DropAnimation = {
 }
 
 export interface KanbanMoveEvent {
-  event: DragEndEvent
+  event: DragEndEvent | DragOverEvent
+  /** false = live drag-over preview (same-column reorders during hover); true = drop-time move. */
+  commit: boolean
   activeContainer: string
   activeIndex: number
   overContainer: string
   overIndex: number
 }
+
+// Structural mirror of @dnd-kit/sortable's internal `Disabled` ({draggable, droppable}):
+// not re-exported from its public index.d.ts, so declared here.
+export type KanbanDisable = { draggable?: boolean; droppable?: boolean }
 
 export interface KanbanRootProps<T> extends HTMLAttributes<HTMLDivElement> {
   value: Record<string, T[]>
@@ -119,6 +132,16 @@ export interface KanbanRootProps<T> extends HTMLAttributes<HTMLDivElement> {
   getItemValue: (item: T) => string
   children: ReactNode
   onMove?: (event: KanbanMoveEvent) => void
+  /** Fires once per drag when it begins (before any move) — distinct from native onDragStart. */
+  onDragBegin?: (event: DragStartEvent) => void
+  onDragCancel?: (event: DragCancelEvent) => void
+  /**
+   * Decides drop-refusal for the veto highlight: return true for (active id, container id)
+   * pairs whose drop must be refused. Purely visual — actual refusal stays in onMove.
+   */
+  isDropVetoed?: (activeId: number, containerId: string) => boolean
+  /** Registers the consumer's optimistic-layout ref via a setter callback; the primitive reads it during drags instead of the (possibly stale) rendered value. */
+  registerDragLayout?: (adopt: (ref: React.MutableRefObject<Record<string, T[]> | null>) => void) => void
   asChild?: boolean
   modifiers?: Modifiers
 }
@@ -131,6 +154,10 @@ function Kanban<T>({
   className,
   asChild = false,
   onMove,
+  onDragBegin,
+  onDragCancel,
+  isDropVetoed,
+  registerDragLayout,
   modifiers,
   ...props
 }: KanbanRootProps<T>) {
@@ -138,11 +165,20 @@ function Kanban<T>({
   const setColumns = onValueChange
   const [activeId, setActiveId] = useState<UniqueIdentifier | null>(null)
 
+  // Consumer-published optimistic layout (null when no consumer registered one).
+  // While dragging, columnsRef points at it so dnd-kit's preview/commit index math sees
+  // the composed mirror, not the possibly-stale rendered value (render can lag a frame
+  // behind RAF bursts → previews applied twice → ghost duplicate of the dragged card).
+  const dragLayoutExternalRef = useRef<React.MutableRefObject<Record<string, unknown[]> | null> | null>(null)
+
   // Refs so all callbacks read the latest values without being recreated on every render.
   // This breaks the cascade: columns change → callbacks recreate → DndContext re-registers → loop.
   const columnsRef = useRef(columns)
 
   columnsRef.current = columns
+
+  // While dragging, dnd-kit's indices must reflect the mirror, not the possibly-stale render.
+  if (activeId !== null) columnsRef.current = (dragLayoutExternalRef.current?.current ?? columns) as Record<string, T[]>
 
   const getItemValueRef = useRef(getItemValue)
 
@@ -151,6 +187,14 @@ function Kanban<T>({
   const onMoveRef = useRef(onMove)
 
   onMoveRef.current = onMove
+
+  const onDragBeginRef = useRef(onDragBegin)
+
+  onDragBeginRef.current = onDragBegin
+
+  const onDragCancelRef = useRef(onDragCancel)
+
+  onDragCancelRef.current = onDragCancel
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: pointerActivationConstraint }),
@@ -173,9 +217,25 @@ function Kanban<T>({
     [isColumn]
   )
 
-  const handleDragStart = useCallback((event: DragStartEvent) => {
-    setActiveId(event.active.id)
-  }, [])
+  // Live drag state for the veto highlight. We can't read the DndContext from this
+  // component (it renders BELOW the provider here), so track the hovered container
+  // from drag events directly. Cleared on drag end/cancel.
+  const [vetoOverContainer, setVetoOverContainer] = useState<string | null>(null)
+  const vetoedContainerId = useMemo(() => {
+    if (!isDropVetoed || !activeId || vetoOverContainer === null) return null
+    const activeIdNum = Number(activeId)
+    if (Number.isNaN(activeIdNum) || isColumn(activeId)) return null
+    return isDropVetoed(activeIdNum, vetoOverContainer) ? vetoOverContainer : null
+  }, [isDropVetoed, activeId, vetoOverContainer, isColumn])
+
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      onDragBeginRef.current?.(event)
+      setVetoOverContainer(null)
+      setActiveId(event.active.id)
+    },
+    []
+  )
 
   // RAF refs throttle onDragOver: we only process the latest event per animation frame.
   // This prevents React from receiving dozens of setState calls per frame during rapid drags,
@@ -185,9 +245,10 @@ function Kanban<T>({
 
   const handleDragOver = useCallback(
     (event: DragOverEvent) => {
-      if (onMoveRef.current) return
-
-      // Always capture the latest event; only one RAF runs at a time.
+      // When a persisted-mode consumer supplies onMove, still shuffle previews within the
+      // current column during drag; cross-column moves stay deferred to onDragEnd (iframe
+      // pointer-capture loss — an item changing column unmounts its DOM node mid-drag).
+      // The pending in-flight move is passed along so consumers can veto or preview it.
       pendingDragOverRef.current = event
       if (dragOverRafRef.current !== null) return
 
@@ -200,24 +261,46 @@ function Kanban<T>({
 
         const { active, over } = latestEvent
 
-        if (!over) return
+        if (!over) {
+          setVetoOverContainer(null)
+          return
+        }
         if (isColumn(active.id)) return
 
-        const activeContainer = findContainer(active.id)
         const overContainer = findContainer(over.id)
+        // Track the hovered container for the veto highlight (cheap, event-driven).
+        setVetoOverContainer(overContainer ?? null)
+        if (!overContainer) return
+
+        const activeContainer = findContainer(active.id)
 
         // Only reorder within the same column during drag. Cross-column moves are
         // committed in onDragEnd instead — moving an item to another column unmounts
         // its DOM node and remounts it, which releases pointer capture and causes the
         // drag to end prematurely when the kanban is rendered inside an iframe.
-        if (!activeContainer || !overContainer || activeContainer !== overContainer) return
+        if (activeContainer !== overContainer) return
 
         const cols = columnsRef.current
         const getId = getItemValueRef.current
         const activeIndex = cols[activeContainer].findIndex((item: T) => getId(item) === active.id)
-        const overIndex = cols[activeContainer].findIndex((item: T) => getId(item) === over.id)
+        // Hovering the column body itself (not an item) → insert at the end.
+        const overIndex = isColumn(over.id) ? cols[overContainer].length : cols[overContainer].findIndex((item: T) => getId(item) === over.id)
 
         if (activeIndex === overIndex) return
+
+        if (onMoveRef.current) {
+          // Persisted mode: report the pending reorder instead of committing it —
+          // the consumer mirrors it optimistically and persists on drop.
+          onMoveRef.current({
+            event: latestEvent,
+            commit: false,
+            activeContainer,
+            activeIndex,
+            overContainer,
+            overIndex
+          })
+          return
+        }
 
         setColumns({
           ...cols,
@@ -237,10 +320,15 @@ function Kanban<T>({
     pendingDragOverRef.current = null
   }, [])
 
-  const handleDragCancel = useCallback(() => {
-    flushPendingDragOver()
-    setActiveId(null)
-  }, [flushPendingDragOver])
+  const handleDragCancel = useCallback(
+    (event: DragCancelEvent) => {
+      flushPendingDragOver()
+      setVetoOverContainer(null)
+      setActiveId(null)
+      onDragCancelRef.current?.(event)
+    },
+    [flushPendingDragOver]
+  )
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
@@ -248,6 +336,7 @@ function Kanban<T>({
 
       const { active, over } = event
 
+      setVetoOverContainer(null)
       setActiveId(null)
 
       if (!over) return
@@ -265,7 +354,7 @@ function Kanban<T>({
             ? cols[overContainer].length
             : cols[overContainer].findIndex((item: T) => getId(item) === over.id)
 
-          onMoveRef.current({ event, activeContainer, activeIndex, overContainer, overIndex })
+          onMoveRef.current({ event, commit: true, activeContainer, activeIndex, overContainer, overIndex })
         }
 
         return
@@ -334,6 +423,21 @@ function Kanban<T>({
     [findContainer, isColumn, setColumns, flushPendingDragOver]
   )
 
+  const registerDragLayoutStable = useRef(registerDragLayout)
+  registerDragLayoutStable.current = registerDragLayout
+
+  useEffect(() => {
+    const register = registerDragLayoutStable.current
+    if (!register) return
+    // Board publishes its optimistic layout ref; the primitive adopts it for index math.
+    let adopted: React.MutableRefObject<Record<string, unknown[]> | null> | null = null
+    register(ref => {
+      adopted = ref as React.MutableRefObject<Record<string, unknown[]> | null>
+    })
+    dragLayoutExternalRef.current = adopted
+    return () => { dragLayoutExternalRef.current = null }
+  }, [])
+
   const stableGetItemId = useCallback((item: T) => getItemValueRef.current(item), [])
 
   const contextValue = useMemo(
@@ -351,6 +455,8 @@ function Kanban<T>({
     [columns, setColumns, stableGetItemId, columnIds, activeId, findContainer, isColumn, modifiers]
   )
 
+  // Board publishes { vetoed, draggedCardId } through VetoContext; the optimistic
+  // layout ref is adopted directly into columnsRef via registerDragLayout.
   const Comp = asChild ? Slot.Root : 'div'
 
   return (
@@ -370,7 +476,14 @@ function Kanban<T>({
           className={cn(activeId !== null && 'cursor-grabbing!', className)}
           {...props}
         >
-          {children}
+          <VetoContext.Provider
+            value={{
+              vetoed: vetoedContainerId != null,
+              draggedCardId: activeId && !isColumn(activeId) ? Number(activeId) : null
+            }}
+          >
+            {children}
+          </VetoContext.Provider>
         </Comp>
       </DndContext>
     </KanbanContext.Provider>
@@ -396,12 +509,13 @@ function KanbanBoard({ className, asChild = false, children, ...props }: KanbanB
 
 export interface KanbanColumnProps extends HTMLAttributes<HTMLDivElement> {
   value: string
-  disabled?: boolean
+  disabled?: boolean | KanbanDisable
   asChild?: boolean
 }
 
 function KanbanColumn({ value, className, asChild = false, disabled, children, ...props }: KanbanColumnProps) {
   const isOverlay = useContext(IsOverlayContext)
+  const disableAll = disabled === true
 
   const {
     setNodeRef,
@@ -412,7 +526,7 @@ function KanbanColumn({ value, className, asChild = false, disabled, children, .
     isDragging: isSortableDragging
   } = useSortable({
     id: value,
-    disabled: disabled || isOverlay,
+    disabled: disableAll || (isOverlay ? true : disabled),
     animateLayoutChanges
   })
 
@@ -461,7 +575,7 @@ function KanbanColumn({ value, className, asChild = false, disabled, children, .
         className={cn(
           'group/kanban-column flex flex-col',
           isSortableDragging && 'z-50 opacity-50',
-          disabled && 'opacity-50',
+          disableAll && 'opacity-50',
           className
         )}
         {...props}
@@ -510,12 +624,14 @@ function KanbanColumnHandle({
 
 export interface KanbanItemProps extends HTMLAttributes<HTMLDivElement> {
   value: string
-  disabled?: boolean
+  /** Boolean `true` disables both drag and drop; object form disables per-axis ({draggable: true} = undraggable but still a drop target). */
+  disabled?: boolean | KanbanDisable
   asChild?: boolean
 }
 
 function KanbanItem({ value, className, asChild = false, disabled, children, ...props }: KanbanItemProps) {
   const isOverlay = useContext(IsOverlayContext)
+  const disableAll = disabled === true
 
   const {
     setNodeRef,
@@ -526,7 +642,7 @@ function KanbanItem({ value, className, asChild = false, disabled, children, ...
     isDragging: isSortableDragging
   } = useSortable({
     id: value,
-    disabled: disabled || isOverlay,
+    disabled: disableAll || (isOverlay ? true : disabled),
     animateLayoutChanges
   })
 
@@ -561,7 +677,7 @@ function KanbanItem({ value, className, asChild = false, disabled, children, ...
         ref={setNodeRef}
         style={style}
         {...attributes}
-        className={cn(isSortableDragging && 'z-50 opacity-50', disabled && 'opacity-50', className)}
+        className={cn(isSortableDragging && 'z-50 opacity-50', disableAll && 'opacity-50', className)}
         {...props}
       >
         {children}
@@ -655,3 +771,6 @@ export {
   KanbanColumnContent,
   KanbanOverlay
 }
+
+/** True while the hovered (active, container) pair would be refused at drop; read via useContext in column components. */
+export { VetoContext }
