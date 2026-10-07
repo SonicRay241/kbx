@@ -4,7 +4,7 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { CircleCheckIcon, GitBranchIcon, XIcon } from 'lucide-react'
 import { useState } from 'react'
-import { db, type Card as CardData } from '@/lib/db'
+import type { Card as CardData } from '@/lib/db'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 
 interface UpstreamDialogProps {
@@ -13,9 +13,12 @@ interface UpstreamDialogProps {
   columns: { id: string; title: string }[]
   open: boolean
   onOpenChange: (open: boolean) => void
+  /** Write-through updates so the board's local state is the single render truth. */
+  onUpdateCard: (id: number, changes: Partial<CardData>) => void
+  onDeleteCard: (id: number) => void
 }
 
-export function UpstreamDialog({ cardId, cards, columns, open, onOpenChange }: UpstreamDialogProps) {
+export function UpstreamDialog({ cardId, cards, columns, open, onOpenChange, onUpdateCard, onDeleteCard }: UpstreamDialogProps) {
   const [selected, setSelected] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -51,20 +54,18 @@ export function UpstreamDialog({ cardId, cards, columns, open, onOpenChange }: U
   const addUpstream = () => {
     const id = Number(selected)
     if (!id) return
-    void db.cards.update(card.id!, { upstreamIds: [...card.upstreamIds, id] })
+    onUpdateCard(card.id!, { upstreamIds: [...card.upstreamIds, id] })
     setSelected('')
   }
 
   const deleteCard = () => {
     const id = card.id!
-    void db.transaction('rw', db.cards, async () => {
-      const all = await db.cards.where('profileId').equals(card.profileId).toArray()
-      await db.cards.delete(id)
-      const referencing = all.filter(c => c.upstreamIds.includes(id))
-      await db.cards.bulkUpdate(
-        referencing.map(c => ({ key: c.id!, changes: { upstreamIds: c.upstreamIds.filter(u => u !== id) } }))
-      )
-    })
+    onDeleteCard(id)
+    for (const other of cards) {
+      if (other.upstreamIds.includes(id)) {
+        onUpdateCard(other.id!, { upstreamIds: other.upstreamIds.filter(u => u !== id) })
+      }
+    }
     onOpenChange(false)
   }
 
@@ -74,7 +75,7 @@ export function UpstreamDialog({ cardId, cards, columns, open, onOpenChange }: U
         <DialogHeader>
           <Input
             value={card.title}
-            onChange={e => void db.cards.update(card.id!, { title: e.target.value })}
+            onChange={e => onUpdateCard(card.id!, { title: e.target.value })}
             className="border-none bg-transparent px-0 text-lg font-semibold shadow-none focus-visible:ring-0"
             aria-label="Card title"
           />
@@ -111,7 +112,7 @@ export function UpstreamDialog({ cardId, cards, columns, open, onOpenChange }: U
                   variant="ghost"
                   size="icon-sm"
                   aria-label={`Remove upstream ${u.title}`}
-                  onClick={() => void db.cards.update(card.id!, { upstreamIds: card.upstreamIds.filter(uId => uId !== u.id) })}
+                  onClick={() => onUpdateCard(card.id!, { upstreamIds: card.upstreamIds.filter(uId => uId !== u.id) })}
                 >
                   <XIcon />
                 </Button>

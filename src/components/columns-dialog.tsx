@@ -1,14 +1,15 @@
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { db, type Profile } from '@/lib/db'
 import { GripVerticalIcon, PlusIcon, Trash2Icon } from 'lucide-react'
+import type { Profile } from '@/lib/db'
 
 interface ColumnsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  profileId: number
   columns: Profile['columns']
+  /** Write-through: updates board state and persists. */
+  onChangeColumns: (columns: Profile['columns']) => void
   /** Board opens a confirm dialog; resolved promise performs the removal after approval. */
   onRequestRemove: (columnId: string, perform: () => void) => void
 }
@@ -16,27 +17,25 @@ interface ColumnsDialogProps {
 let columnSeq = 0
 const nextColumnId = () => `col-${Date.now().toString(36)}-${(columnSeq++).toString(36)}`
 
-export function ColumnsDialog({ open, onOpenChange, profileId, columns, onRequestRemove }: ColumnsDialogProps) {
+export function ColumnsDialog({ open, onOpenChange, columns, onChangeColumns, onRequestRemove }: ColumnsDialogProps) {
   const rename = (id: string, title: string) => {
-    void db.profiles.update(profileId, { columns: columns.map(c => (c.id === id ? { ...c, title } : c)) })
+    onChangeColumns(columns.map(c => (c.id === id ? { ...c, title } : c)))
   }
 
   const addColumn = () => {
-    void db.profiles.update(profileId, {
-      columns: [...columns, { id: nextColumnId(), title: `Column ${columns.length + 1}` }]
-    })
+    onChangeColumns([...columns, { id: nextColumnId(), title: `Column ${columns.length + 1}` }])
   }
 
   const removeColumn = (id: string) => {
     onRequestRemove(id, () => {
-      void db.profiles.update(profileId, { columns: columns.filter(c => c.id !== id) })
+      onChangeColumns(columns.filter(c => c.id !== id))
     })
   }
 
   const setAsFinished = (id: string) => {
     const target = columns.find(c => c.id === id)
     if (!target) return
-    void db.profiles.update(profileId, { columns: [...columns.filter(c => c.id !== id), target] })
+    onChangeColumns([...columns.filter(c => c.id !== id), target])
   }
 
   return (

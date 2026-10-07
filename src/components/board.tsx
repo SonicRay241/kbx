@@ -1,9 +1,8 @@
-import { useLiveQuery } from 'dexie-react-hooks'
 import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import { Link } from '@tanstack/react-router'
 import type { KanbanMoveEvent } from '@/components/ui/kanban'
 
-import { db, DEFAULT_COLUMNS, type Card as CardData } from '@/lib/db'
+import { db, DEFAULT_COLUMNS, type Card as CardData, type Profile } from '@/lib/db'
 import { cn } from '@/lib/utils'
 import {
   Kanban,
@@ -37,10 +36,6 @@ function groupByColumn(cards: CardData[], columns: { id: string }[]): Record<str
   for (const card of cards) (cols[card.column] ??= []).push(card)
   return cols
 }
-
-/** Layout signature (per-column card-id order), keyed by the column order of `cols`. */
-const layoutSig = (cols: { id: string }[], layout: Record<string, CardData[]>) =>
-  cols.map(col => (layout[col.id] ?? []).map(c => c.id).join(',')).join('|')
 
 interface BoardColumnProps extends Omit<ComponentProps<typeof KanbanColumn>, 'children' | 'value'> {
   column: { id: string; title: string }
@@ -116,57 +111,39 @@ function BoardColumn({
 }
 
 export function Board({ profileId }: { profileId: number }) {
-  const cardsAll = useLiveQuery(() => db.cards.where('profileId').equals(profileId).toArray(), [profileId])
-  const profile = useLiveQuery(() => db.profiles.get(profileId), [profileId])
+  const [cards, setCards] = useState<CardData[]>([])
+  const [profile, setProfile] = useState<Profile | null>(null)
+
+  // DB is read once on mount; local state is the render truth and every mutation
+  // writes through to IndexedDB in parallel (fire-and-forget).
+  useEffect(() => {
+    void (async () => {
+      const [p, cs] = await Promise.all([db.profiles.get(profileId), db.cards.where('profileId').equals(profileId).toArray()])
+      setProfile(p ?? null)
+      setCards(cs.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt))
+    })()
+  }, [profileId])
+
   const [dialogCardId, setDialogCardId] = useState<number | null>(null)
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [confirm, setConfirm] = useState<{ title: string; description: string; action: () => void } | null>(null)
-
-  // The kanban primitive mutates layout only in local state; here DB truth is async and
-  // always authoritative, so the move handler maintains an optimistic mirror: dnd previews
-  // compose against it via a ref (React state alone lags a frame behind drag RAF bursts →
-  // stacked splices), and it is retired once liveQuery data matches the committed layout.
-  const [pendingCards, setPendingCards] = useState<CardData[] | null>(null)
-  // Layout signature of the last committed move; when liveQuery data matches it, the
-  // optimistic mirror is retired (fresh DB data takes over).
-  const [committedSig, setCommittedSig] = useState<string | null>(null)
 
   const columns = profile?.columns?.length ? profile.columns : DEFAULT_COLUMNS
   // Rightmost column is the finished anchor (leftmost when the board is rendered RTL).
   const finishedColumnId = columns[columns.length - 1].id
 
-  const base = useMemo(
-    () => (cardsAll ?? []).slice().sort((a, b) => a.order - b.order || a.createdAt - b.createdAt),
-    [cardsAll]
-  )
-
-  // Latest drag layout, ref-synchronized: handleMove mutates this directly and mirrors
-  // it into pendingCards for rendering.
-  const dragLayoutRef = useRef<Record<string, CardData[]> | null>(null)
-  const cards = useMemo(() => {
-    if (!pendingCards) return base
-    // The mirror only owns ORDER/column. Object CONTENT (title, upstreamIds, …) always comes
-    // from the fresh liveQuery data, so mid-drag edits by other clients stay visible.
-    const fresh = new Map(base.map(c => [c.id!, c]))
-    return pendingCards.map(c => fresh.get(c.id!) ?? c)
-  }, [pendingCards, base])
   const cardById = useMemo(() => new Map(cards.map(c => [c.id!, c])), [cards])
 
   // Column grouping used by both the board render and the drag handlers.
   const cardsByColumn = useMemo(() => groupByColumn(cards, columns), [cards, columns])
 
-  // DB-truth grouping for the mirror-retirement check below.
-  const baseByColumn = useMemo(() => groupByColumn(base, columns), [base, columns])
-
-  // Retire the mirror as soon as liveQuery data reflects the committed layout, so a
-  // mirror never outlives reality.
-  useEffect(() => {
-    if (pendingCards && cardsAll && layoutSig(columns, baseByColumn) === committedSig) {
-      dragLayoutRef.current = null
-      setPendingCards(null)
-      setCommittedSig(null)
-    }
-  }, [cardsAll, pendingCards, baseByColumn, committedSig, columns])
+  // Mid-drag composed layout (RAF bursts land between React renders, so preview
+  // composition must read a ref, not possibly-stale state). Scoped to a drag: set
+  // at drag start, cleared on cancel / veto / commit — outside drags it is null.
+  const dragLayoutRef = useRef<Record<string, CardData[]> | null>(null)
+  // Column order + card layout at drag start; veto/cancel restores it so rejected
+  // moves animate back and previews never leak into the settled board.
+  const dragStartSnapshot = useRef<Record<string, CardData[]> | null>(null)
 
   const blockedByUpstream = (id: number) => {
     const card = cardById.get(id)
@@ -174,19 +151,32 @@ export function Board({ profileId }: { profileId: number }) {
   }
 
   function handleAddCard(column: string) {
-    void db.cards.add({
+    const card: CardData = {
+      // negative ids never collide with Dexie's auto-increment — the temp id only
+      // needs to survive until the write resolves and the true row replaces it.
+      id: -Date.now(),
       profileId,
       column,
       title: 'New card',
       order: cardsByColumn[column]?.length ?? 0,
       upstreamIds: [],
       createdAt: Date.now()
+    }
+    setCards(cs => [...cs, card])
+    // Dexie auto-increments only when the key is absent — strip the temp id and let
+    // add() generate the real one, then swap it into state.
+    const { id: _tmp, ...row } = card
+    void db.cards.add(row).then(id => {
+      setCards(cs => cs.map(c => (c.id === card.id ? { ...c, id } : c)))
     })
   }
 
-  const discardMirror = () => {
-    dragLayoutRef.current = null
-    setPendingCards(null)
+  const restoreDragStart = () => {
+    if (dragStartSnapshot.current) {
+      setCards(Object.values(dragStartSnapshot.current).flat())
+      dragLayoutRef.current = null
+      dragStartSnapshot.current = null
+    }
   }
 
   const handleMove = ({ event, commit, activeContainer, overContainer, activeIndex, overIndex }: KanbanMoveEvent) => {
@@ -197,31 +187,30 @@ export function Board({ profileId }: { profileId: number }) {
     // a half-composed layout → oscillating indices → no-op commits).
     const sourceItems = [...(layout[activeContainer] ?? [])]
     const targetItems = activeContainer === overContainer ? sourceItems : [...(layout[overContainer] ?? [])]
+    const isCrossColumn = activeContainer !== overContainer
 
     // Veto: only *entering* the finished column is refused; reordering within it is fine.
-    if (commit && overContainer === finishedColumnId && activeContainer !== overContainer && blockedByUpstream(movedId)) {
-      discardMirror() // card animates back to its source spot
+    if (commit && isCrossColumn && overContainer === finishedColumnId && blockedByUpstream(movedId)) {
+      restoreDragStart() // card animates back to its source spot
       // ponytail: silently refuses the move; surface a toast once the app has one
       return
     }
 
     let withoutMoved: CardData[] = []
-    if (activeContainer !== overContainer) {
-      // Cross-column drop: committed at drop (live preview is skipped for cross-column);
-      // identify the moved card by id (indices are measured against the previewed layout)
-      // and splice it into the target at the hover index.
+    if (isCrossColumn) {
+      // Cross-column drop: identified by id (indices are measured against the
+      // previewed layout) and spliced into the target at the hover index.
       const moved = sourceItems.find(c => c.id === movedId)
       if (!moved) return
       withoutMoved = sourceItems.filter(c => c.id !== movedId)
       targetItems.splice(overIndex, 0, { ...moved, column: overContainer })
     } else if (activeIndex !== overIndex) {
-      if (commit) {
-        // Same-column drop: the drag-over preview already reordered `value`, and the
-        // drop indices are computed against that previewed layout — persist it as-is,
-        // do NOT splice again (that would insert a duplicate).
-      } else {
+      if (!commit) {
         targetItems.splice(overIndex, 0, sourceItems.splice(activeIndex, 1)[0])
       }
+      // commit: the drag-over preview already reordered `value`, and the drop indices
+      // are computed against that previewed layout — keep it as-is, no second splice
+      // (that would insert a duplicate).
     } else {
       // No positional change.
       return
@@ -232,26 +221,23 @@ export function Board({ profileId }: { profileId: number }) {
     for (const col of columns) {
       nextRecord[col.id] = col.id === overContainer ? targetItems : col.id === activeContainer ? withoutMoved : (layout[col.id] ?? [])
     }
-    setPendingCards(Object.values(nextRecord).flat())
-    dragLayoutRef.current = nextRecord
 
-    if (commit) {
-      // Once the liveQuery delivers rows in this exact layout, the mirror is retired.
-      setCommittedSig(layoutSig(columns, nextRecord))
-      // bulkUpdate opens its own rw transaction internally; wrapping it in another
-      // transaction inside dnd's RAF context leaves the outer promise unsettled.
-      void db.cards.bulkUpdate(nextRecord[overContainer].map((card, order) => ({ key: card.id!, changes: { order, column: card.column } })))
-    }
+    // Preview (commit: false): mirror into the drag ref for continued composition.
+    // Commit: this IS the settled layout — state and DB updated directly, ref cleared.
+    dragLayoutRef.current = commit ? null : nextRecord
+    if (!commit) return
+
+    setCards(Object.values(nextRecord).flat())
+    void db.cards.bulkUpdate(nextRecord[overContainer].map((card, order) => ({ key: card.id!, changes: { order, column: card.column } })))
   }
 
-  const handleBoardDragCancel = discardMirror
-
-  // A new drag always starts from the DB truth.
+  // A new drag always starts from the current layout — compose previews against that.
   const resetDragLayout = () => {
-    dragLayoutRef.current = null
+    dragLayoutRef.current = { ...cardsByColumn }
+    dragStartSnapshot.current = { ...cardsByColumn }
   }
 
-  const removeColumn = (columnId: string, updateColumns: () => void) => {
+  const removeColumn = (columnId: string, perform: () => void) => {
     const name = columns.find(c => c.id === columnId)?.title ?? columnId
     const moved = cardsByColumn[columnId]?.length ?? 0
     // Migrate its cards into the finished column — except when it IS the finished column; then the previous surviving column takes over.
@@ -264,17 +250,23 @@ export function Board({ profileId }: { profileId: number }) {
           : `Its ${moved} ${moved === 1 ? 'card' : 'cards'} will be deleted.`
         : 'Upstream links pointing into this column stay valid.',
       action: () => {
+        const nextColumns = columns.filter(c => c.id !== columnId)
+        setProfile(p => (p ? { ...p, columns: nextColumns } : p))
+        if (moved) {
+          setCards(cs => cs.map(c => (c.column === columnId ? { ...c, column: migrateTo! } : c)))
+        }
         void db.transaction('rw', db.cards, db.profiles, async () => {
           if (moved && migrateTo) {
             await db.cards.where('[profileId+column]').equals([profileId, columnId]).modify({ column: migrateTo })
           }
-          updateColumns()
+          await db.profiles.update(profileId, { columns: nextColumns })
         })
+        perform()
       }
     })
   }
 
-  if (!cardsAll || !profile) return null
+  if (!profile) return null
 
   return (
     <div className="space-y-4">
@@ -293,19 +285,17 @@ export function Board({ profileId }: { profileId: number }) {
         <Kanban
           value={cardsByColumn}
           onValueChange={next => {
-            // Column drags arrive here; persist the new key order.
-            void db.profiles.update(profileId, { columns: Object.keys(next).map(id => columns.find(c => c.id === id)!) })
+            // Column drags arrive here; commit to state and persist the new key order.
+            setCards(Object.values(next).flat())
+            const nextColumns = Object.keys(next).map(id => columns.find(c => c.id === id)!)
+            setProfile(p => (p ? { ...p, columns: nextColumns } : p))
+            void db.profiles.update(profileId, { columns: nextColumns })
           }}
           getItemValue={item => String(item.id)}
           onMove={handleMove}
           onDragBegin={resetDragLayout}
-          onDragCancel={handleBoardDragCancel}
+          onDragCancel={restoreDragStart}
           isDropVetoed={(activeId, containerId) => containerId === finishedColumnId && blockedByUpstream(activeId)}
-          registerDragLayout={adopt => {
-            // Publish the optimistic mirror so dnd-kit's preview/commit index math reads
-            // the latest composed layout, not the (possibly stale) rendered value.
-            adopt(dragLayoutRef)
-          }}
           className="mx-auto w-full max-w-5xl"
         >
           <KanbanBoard
@@ -360,13 +350,24 @@ export function Board({ profileId }: { profileId: number }) {
         onOpenChange={open => {
           if (!open) setDialogCardId(null)
         }}
+        onUpdateCard={(id, changes) => {
+          setCards(cs => cs.map(c => (c.id === id ? { ...c, ...changes } : c)))
+          void db.cards.update(id, changes)
+        }}
+        onDeleteCard={id => {
+          setCards(cs => cs.filter(c => c.id !== id))
+          void db.cards.delete(id)
+        }}
       />
 
       <ColumnsDialog
         open={columnsOpen}
         onOpenChange={setColumnsOpen}
-        profileId={profileId}
         columns={columns}
+        onChangeColumns={next => {
+          setProfile(p => (p ? { ...p, columns: next } : p))
+          void db.profiles.update(profileId, { columns: next })
+        }}
         onRequestRemove={removeColumn}
       />
 
