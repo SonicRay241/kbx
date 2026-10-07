@@ -152,13 +152,16 @@ export function AppShell({ children }: { children: ReactNode }) {
           <SidebarHeader className="pb-0">
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton className="gap-4 [&_svg]:size-3.5 group-data-[collapsible=icon]:p-1!" asChild>
-                  <Link to="/">
-                    <div className="flex aspect-square size-6 items-center justify-center rounded-sm bg-blue-600 text-white">
-                      <LayersPlusIcon strokeWidth={2.5} />
-                    </div>
-                    <span className="font-medium">Kbx</span>
-                  </Link>
+                <SidebarMenuButton className="p-0.5 group-data-[collapsible=icon]:p-0.5!">
+                  <div className="relative px-0.5 flex w-full gap-4 [&_svg]:size-3.5">
+                    <Link to="/" className="flex h-8 shrink-0 items-center gap-2 py-2 overflow-hidden rounded-md text-sm outline-hidden sidebar-menu-button hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent">
+                      <div className="flex aspect-square size-6 items-center justify-center rounded-sm bg-blue-600 text-white">
+                        <LayersPlusIcon strokeWidth={2.5} />
+                      </div>
+                      <span className="font-medium">Kbx</span>
+                    </Link>
+                  <SidebarTrigger className="p-1 absolute right-0 top-0.5 z-10 hover:opacity-100 group-data-[collapsible=icon]:opacity-0"/>
+                  </div>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>
@@ -272,9 +275,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           </SidebarContent>
         </Sidebar>
         <SidebarInset>
-          <header className="flex items-center gap-2 p-4 pb-0">
-            <SidebarTrigger />
-          </header>
           {children}
         </SidebarInset>
 
