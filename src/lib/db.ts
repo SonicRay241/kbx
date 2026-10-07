@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie'
 
-export type Profile = {
+export type BoardRow = {
   id?: number
   name: string
   columns: { id: string; title: string }[]
@@ -9,7 +9,7 @@ export type Profile = {
 
 export type Card = {
   id: number
-  profileId: number
+  boardId: number
   column: string
   title: string
   order: number
@@ -18,14 +18,25 @@ export type Card = {
 }
 
 const db = new Dexie('kanban') as Dexie & {
-  profiles: EntityTable<Profile, 'id'>
+  boards: EntityTable<BoardRow, 'id'>
   cards: EntityTable<Card, 'id'>
 }
 
-db.version(1).stores({
-  profiles: '++id, createdAt',
-  cards: '++id, profileId, column, [profileId+column]',
-})
+db.version(2)
+  .stores({
+    boards: '++id, createdAt',
+    cards: '++id, boardId, column, [boardId+column]',
+  })
+  .upgrade(async (tx) => {
+    // profiles was the v1 name of the boards table; carry rows and the card foreign key over.
+    const oldBoards = await tx.table('profiles').toArray()
+    const newIds = await tx.table('boards').bulkAdd(oldBoards, { allKeys: true })
+    await tx.table('cards').toCollection().modify((card: Card & { profileId?: number }) => {
+      card.boardId = newIds[card.profileId!]
+      delete card.profileId
+    })
+    await tx.table('profiles').delete(oldBoards.map((b: BoardRow) => b.id!))
+  })
 
 // Rightmost column is the finished state (leftmost for RTL boards): cards become draggable once all their upstream cards are here.
 export const DEFAULT_COLUMNS = [

@@ -10,7 +10,6 @@ import {
   SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
-  SidebarHeader,
   SidebarInset,
   SidebarMenu,
   SidebarMenuAction,
@@ -51,37 +50,37 @@ import {
 } from "@/components/ui/context-menu";
 
 /**
- * Persistent shell: sidebar with profile switcher + the new-profile dialog.
+ * Persistent shell: sidebar with board switcher + the new-board dialog.
  * Wrap route content as children; nested routes keep it mounted across navigation.
  * Opening the dialog from inside children is exposed via context.
  */
-const CreateProfileContext = createContext<{
+const CreateBoardContext = createContext<{
   open: (prefill?: string) => void;
 }>({ open: () => {} });
 
-export const useCreateProfile = () => useContext(CreateProfileContext);
+export const useCreateBoard = () => useContext(CreateBoardContext);
 
 /** 3-dot menu button offering Rename / Remove. */
-function ProfileDotMenu({
-  profile,
+function BoardDotMenu({
+  board,
   onRename,
   onRemove,
 }: {
-  profile: { id: number; name: string };
+  board: { id: number; name: string };
   onRename: (p: { id: number; name: string }) => void;
   onRemove: (p: { id: number; name: string }) => void;
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <SidebarMenuAction showOnHover aria-label={`Profile options for ${profile.name}`}>
+        <SidebarMenuAction showOnHover aria-label={`Board options for ${board.name}`}>
           <MoreHorizontalIcon/>
         </SidebarMenuAction>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="end">
         <DropdownMenuItem
           onClick={() => {
-            onRename(profile);
+            onRename(board);
           }}
         >
           <PencilIcon className="size-3.5" />
@@ -90,7 +89,7 @@ function ProfileDotMenu({
         <DropdownMenuItem
           variant="destructive"
           onClick={() => {
-            onRemove(profile);
+            onRemove(board);
           }}
         >
           <Trash2Icon className="size-3.5" />
@@ -103,11 +102,11 @@ function ProfileDotMenu({
 
 export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const { profileId: routeProfileId } = useParams({ strict: false });
-  const activeId = routeProfileId ? Number(routeProfileId) : null;
+  const { boardId: routeBoardId } = useParams({ strict: false });
+  const activeId = routeBoardId ? Number(routeBoardId) : null;
 
-  const profiles = useLiveQuery(() =>
-    db.profiles.orderBy("createdAt").toArray(),
+  const boards = useLiveQuery(() =>
+    db.boards.orderBy("createdAt").toArray(),
   );
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
@@ -119,10 +118,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     null,
   );
 
-  const createProfile = () => {
+  const createBoard = () => {
     const name = newName.trim();
     if (!name) return;
-    void db.profiles
+    void db.boards
       .add({
         name,
         columns: DEFAULT_COLUMNS.map((c) => ({ ...c })),
@@ -132,19 +131,19 @@ export function AppShell({ children }: { children: ReactNode }) {
         setNewName("");
         setCreateOpen(false);
         void navigate({
-          to: "/boards/$profileId",
-          params: { profileId: String(id) },
+          to: "/boards/$boardId",
+          params: { boardId: String(id) },
         });
       });
   };
 
-  const openCreate = () => {
+  const openCreateBoard = () => {
     setNewName("");
     setCreateOpen(true);
   };
 
   return (
-    <CreateProfileContext.Provider value={{ open: openCreate }}>
+    <CreateBoardContext.Provider value={{ open: openCreateBoard }}>
       <SidebarProvider>
         <Sidebar>
           <SidebarContent>
@@ -169,19 +168,19 @@ export function AppShell({ children }: { children: ReactNode }) {
               </SidebarContent>
             </SidebarGroup>
             <SidebarGroup>
-              <SidebarGroupLabel>Profiles</SidebarGroupLabel>
+              <SidebarGroupLabel>Boards</SidebarGroupLabel>
               <SidebarGroupAction
                 className="[&>svg]:size-3"
-                onClick={openCreate}
+                onClick={openCreateBoard}
               >
-                <PlusIcon aria-label="New profile" />
+                <PlusIcon aria-label="New board" />
               </SidebarGroupAction>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {profiles?.map((p) => (
+                  {boards?.map((p) => (
                     <SidebarMenuItem key={p.id} className="group/sidebar-item">
-                      <ProfileDotMenu
-                        profile={{ id: p.id!, name: p.name }}
+                      <BoardDotMenu
+                        board={{ id: p.id!, name: p.name }}
                         onRename={setEditing}
                         onRemove={setPendingDelete}
                       />
@@ -198,7 +197,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                                 onBlur={(e) => {
                                   const name = e.target.value.trim();
                                   if (name && name !== p.name)
-                                    void db.profiles.update(p.id!, { name });
+                                    void db.boards.update(p.id!, { name });
                                   setEditing(null);
                                 }}
                                 onKeyDown={(e) => {
@@ -210,15 +209,15 @@ export function AppShell({ children }: { children: ReactNode }) {
                                   }
                                 }}
                                 className="h-6 w-full rounded-sm border-none bg-sidebar-accent px-2 text-sm font-medium outline-hidden"
-                                aria-label="Rename profile"
+                                aria-label="Rename board"
                               />
                             ) : (
                               <button
                                 type="button"
                                 onClick={() =>
                                   void navigate({
-                                    to: "/boards/$profileId",
-                                    params: { profileId: String(p.id) },
+                                    to: "/boards/$boardId",
+                                    params: { boardId: String(p.id) },
                                   })
                                 }
                               >
@@ -266,17 +265,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                createProfile();
+                createBoard();
               }}
             >
               <DialogHeader>
-                <DialogTitle>New profile</DialogTitle>
+                <DialogTitle>New board</DialogTitle>
               </DialogHeader>
               <Input
                 autoFocus
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="Profile name"
+                placeholder="BoardRow name"
                 className="my-4"
               />
               <DialogFooter>
@@ -298,23 +297,23 @@ export function AppShell({ children }: { children: ReactNode }) {
         <ConfirmDialog
           open={pendingDelete !== null}
           onOpenChange={(o) => !o && setPendingDelete(null)}
-          title={`Delete profile “${pendingDelete?.name}”?`}
-          description="All cards and upstream links in this profile will be permanently removed."
+          title={`Delete board “${pendingDelete?.name}”?`}
+          description="All cards and upstream links in this board will be permanently removed."
           onConfirm={() => {
             if (!pendingDelete) return;
             const wasActive = pendingDelete.id === activeId;
-            void db.transaction("rw", db.cards, db.profiles, async () => {
+            void db.transaction("rw", db.cards, db.boards, async () => {
               await db.cards
-                .where("profileId")
+                .where('boardId')
                 .equals(pendingDelete.id)
                 .delete();
-              await db.profiles.delete(pendingDelete.id);
+              await db.boards.delete(pendingDelete.id);
             });
             setPendingDelete(null);
             if (wasActive) void navigate({ to: "/" });
           }}
         />
       </SidebarProvider>
-    </CreateProfileContext.Provider>
+    </CreateBoardContext.Provider>
   );
 }

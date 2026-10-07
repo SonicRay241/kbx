@@ -2,14 +2,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { GripVerticalIcon, PlusIcon, Trash2Icon } from 'lucide-react'
-import type { Profile } from '@/lib/db'
+import type { BoardRow } from '@/lib/db'
 
 interface ColumnsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  columns: Profile['columns']
+  columns: BoardRow['columns']
   /** Write-through: updates board state and persists. */
-  onChangeColumns: (columns: Profile['columns']) => void
+  onChangeColumns: (columns: BoardRow['columns']) => void
   /** Board opens a confirm dialog; resolved promise performs the removal after approval. */
   onRequestRemove: (columnId: string, perform: () => void) => void
 }

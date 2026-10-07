@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import type { KanbanMoveEvent } from '@/components/ui/kanban'
 
-import { db, DEFAULT_COLUMNS, type Card as CardData, type Profile } from '@/lib/db'
+import { db, DEFAULT_COLUMNS, type Card as CardData, type BoardRow } from '@/lib/db'
 import { cn } from '@/lib/utils'
 import {
   Kanban,
@@ -109,25 +109,25 @@ function BoardColumn({
   )
 }
 
-export function Board({ profileId }: { profileId: number }) {
+export function Board({ boardId }: { boardId: number }) {
   const [cards, setCards] = useState<CardData[]>([])
-  const [profile, setProfile] = useState<Profile | null>(null)
+  const [board, setBoard] = useState<BoardRow | null>(null)
 
   // DB is read once on mount; local state is the render truth and every mutation
   // writes through to IndexedDB in parallel (fire-and-forget).
   useEffect(() => {
     void (async () => {
-      const [p, cs] = await Promise.all([db.profiles.get(profileId), db.cards.where('profileId').equals(profileId).toArray()])
-      setProfile(p ?? null)
+      const [p, cs] = await Promise.all([db.boards.get(boardId), db.cards.where('boardId').equals(boardId).toArray()])
+      setBoard(p ?? null)
       setCards(cs.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt))
     })()
-  }, [profileId])
+  }, [boardId])
 
   const [dialogCardId, setDialogCardId] = useState<number | null>(null)
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [confirm, setConfirm] = useState<{ title: string; description: string; action: () => void } | null>(null)
 
-  const columns = profile?.columns?.length ? profile.columns : DEFAULT_COLUMNS
+  const columns = board?.columns?.length ? board.columns : DEFAULT_COLUMNS
   // Rightmost column is the finished anchor (leftmost when the board is rendered RTL).
   const finishedColumnId = columns[columns.length - 1].id
 
@@ -154,7 +154,7 @@ export function Board({ profileId }: { profileId: number }) {
       // negative ids never collide with Dexie's auto-increment — the temp id only
       // needs to survive until the write resolves and the true row replaces it.
       id: -Date.now(),
-      profileId,
+      boardId,
       column,
       title: 'New card',
       order: cardsByColumn[column]?.length ?? 0,
@@ -250,27 +250,27 @@ export function Board({ profileId }: { profileId: number }) {
         : 'Upstream links pointing into this column stay valid.',
       action: () => {
         const nextColumns = columns.filter(c => c.id !== columnId)
-        setProfile(p => (p ? { ...p, columns: nextColumns } : p))
+        setBoard(p => (p ? { ...p, columns: nextColumns } : p))
         if (moved) {
           setCards(cs => cs.map(c => (c.column === columnId ? { ...c, column: migrateTo! } : c)))
         }
-        void db.transaction('rw', db.cards, db.profiles, async () => {
+        void db.transaction('rw', db.cards, db.boards, async () => {
           if (moved && migrateTo) {
-            await db.cards.where('[profileId+column]').equals([profileId, columnId]).modify({ column: migrateTo })
+            await db.cards.where('[boardId+column]').equals([boardId, columnId]).modify({ column: migrateTo })
           }
-          await db.profiles.update(profileId, { columns: nextColumns })
+          await db.boards.update(boardId, { columns: nextColumns })
         })
         perform()
       }
     })
   }
 
-  if (!profile) return null
+  if (!board) return null
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <h1 className="text-lg font-semibold">{profile.name}</h1>
+        <h1 className="text-lg font-semibold">{board.name}</h1>
         <Button variant="outline" size="sm" className="ml-auto" onClick={() => setColumnsOpen(true)}>
           Columns
         </Button>
@@ -282,8 +282,8 @@ export function Board({ profileId }: { profileId: number }) {
             // Column drags arrive here; commit to state and persist the new key order.
             setCards(Object.values(next).flat())
             const nextColumns = Object.keys(next).map(id => columns.find(c => c.id === id)!)
-            setProfile(p => (p ? { ...p, columns: nextColumns } : p))
-            void db.profiles.update(profileId, { columns: nextColumns })
+            setBoard(p => (p ? { ...p, columns: nextColumns } : p))
+            void db.boards.update(boardId, { columns: nextColumns })
           }}
           getItemValue={item => String(item.id)}
           onMove={handleMove}
@@ -359,8 +359,8 @@ export function Board({ profileId }: { profileId: number }) {
         onOpenChange={setColumnsOpen}
         columns={columns}
         onChangeColumns={next => {
-          setProfile(p => (p ? { ...p, columns: next } : p))
-          void db.profiles.update(profileId, { columns: next })
+          setBoard(p => (p ? { ...p, columns: next } : p))
+          void db.boards.update(boardId, { columns: next })
         }}
         onRequestRemove={removeColumn}
       />
