@@ -1,5 +1,4 @@
 import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
-import { Link } from '@tanstack/react-router'
 import type { KanbanMoveEvent } from '@/components/ui/kanban'
 
 import { db, DEFAULT_COLUMNS, type Card as CardData, type Profile } from '@/lib/db'
@@ -15,7 +14,7 @@ import {
 } from '@/components/ui/kanban'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { GripVerticalIcon, ArrowLeftIcon, PlusIcon } from 'lucide-react'
+import { GripVerticalIcon, PlusIcon } from 'lucide-react'
 import { BoardCard } from '@/components/board-card'
 import { UpstreamDialog } from '@/components/upstream-dialog'
 import { ColumnsDialog } from '@/components/columns-dialog'
@@ -271,11 +270,6 @@ export function Board({ profileId }: { profileId: number }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <Button variant="ghost" size="icon-sm" asChild>
-          <Link to="/" aria-label="Back to profiles">
-            <ArrowLeftIcon />
-          </Link>
-        </Button>
         <h1 className="text-lg font-semibold">{profile.name}</h1>
         <Button variant="outline" size="sm" className="ml-auto" onClick={() => setColumnsOpen(true)}>
           Columns
