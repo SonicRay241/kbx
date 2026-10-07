@@ -10,6 +10,7 @@ import {
   SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
+  SidebarHeader,
   SidebarInset,
   SidebarMenu,
   SidebarMenuAction,
@@ -25,6 +26,7 @@ import {
   Trash2Icon,
   HomeIcon,
   SearchIcon,
+  LayersPlusIcon,
 } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
@@ -73,8 +75,11 @@ function BoardDotMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <SidebarMenuAction showOnHover aria-label={`Board options for ${board.name}`}>
-          <MoreHorizontalIcon/>
+        <SidebarMenuAction
+          showOnHover
+          aria-label={`Board options for ${board.name}`}
+        >
+          <MoreHorizontalIcon />
         </SidebarMenuAction>
       </DropdownMenuTrigger>
       <DropdownMenuContent side="bottom" align="end">
@@ -105,9 +110,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { boardId: routeBoardId } = useParams({ strict: false });
   const activeId = routeBoardId ? Number(routeBoardId) : null;
 
-  const boards = useLiveQuery(() =>
-    db.boards.orderBy("createdAt").toArray(),
-  );
+  const boards = useLiveQuery(() => db.boards.orderBy("createdAt").toArray());
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [pendingDelete, setPendingDelete] = useState<{
@@ -145,27 +148,41 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <CreateBoardContext.Provider value={{ open: openCreateBoard }}>
       <SidebarProvider>
-        <Sidebar>
+        <Sidebar collapsible="icon">
+          <SidebarHeader className="pb-0">
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton className="gap-4 [&_svg]:size-3.5 group-data-[collapsible=icon]:p-1!" asChild>
+                  <Link to="/">
+                    <div className="flex aspect-square size-6 items-center justify-center rounded-sm bg-blue-600 text-white">
+                      <LayersPlusIcon strokeWidth={2.5} />
+                    </div>
+                    <span className="font-medium">Kbx</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarHeader>
           <SidebarContent>
             <SidebarGroup>
-              <SidebarContent>
-                <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton className="[&>svg]:size-3.5" asChild>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton className="[&>svg]:size-3.5" asChild>
                     <Link to="/">
-                      <HomeIcon/>
+                      <HomeIcon />
                       <span>Home</span>
                     </Link>
-                    </SidebarMenuButton>
-                    <SidebarMenuButton className="[&>svg]:size-3.5" asChild>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton className="[&>svg]:size-3.5" asChild>
                     <button>
-                      <SearchIcon/>
+                      <SearchIcon />
                       <span>Search</span>
                     </button>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              </SidebarContent>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
             </SidebarGroup>
             <SidebarGroup>
               <SidebarGroupLabel>Boards</SidebarGroupLabel>
@@ -175,7 +192,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               >
                 <PlusIcon aria-label="New board" />
               </SidebarGroupAction>
-              <SidebarGroupContent>
+              <SidebarGroupContent className="group-data-[collapsible=icon]:hidden">
                 <SidebarMenu>
                   {boards?.map((p) => (
                     <SidebarMenuItem key={p.id} className="group/sidebar-item">
@@ -214,6 +231,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                             ) : (
                               <button
                                 type="button"
+                                className="truncate"
                                 onClick={() =>
                                   void navigate({
                                     to: "/boards/$boardId",
@@ -303,10 +321,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             if (!pendingDelete) return;
             const wasActive = pendingDelete.id === activeId;
             void db.transaction("rw", db.cards, db.boards, async () => {
-              await db.cards
-                .where('boardId')
-                .equals(pendingDelete.id)
-                .delete();
+              await db.cards.where("boardId").equals(pendingDelete.id).delete();
               await db.boards.delete(pendingDelete.id);
             });
             setPendingDelete(null);
