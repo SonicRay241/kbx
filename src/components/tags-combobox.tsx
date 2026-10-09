@@ -13,7 +13,6 @@ import {
   ComboboxSeparator,
   useComboboxAnchor,
 } from "@/components/ui/combobox";
-import { cn } from "cn";
 
 // 12 tailwind tag colors; assigned round-robin at creation so tags stay distinct.
 const TAG_COLORS = [
@@ -130,12 +129,12 @@ export function TagsCombobox({
     <Combobox
       multiple
       autoHighlight
-      items={items.map((t) => t.name)}
-      itemToStringLabel={(n) => n}
-      itemToStringValue={(n) => n}
+      items={items.map((t) => String(t.id))}
+      itemToStringLabel={(id) => tagById.get(Number(id))?.name ?? ""}
+      itemToStringValue={(id) => id}
       inputValue={query}
       onInputValueChange={setQuery}
-      value={tags.filter((t) => selected.includes(t.id!)).map((t) => t.name)}
+      value={selected.map(String)}
       onValueChange={(value, details) => {
         if (creatingRef.current) return; // our own create path already updated selection
         // Only react to real selections. Popup-close 'validation' commits may carry a
@@ -150,18 +149,13 @@ export function TagsCombobox({
         )
           return;
         if (!Array.isArray(value)) return;
-        const names = value as string[];
-        const current = tags
-          .filter((t) => selected.includes(t.id!))
-          .map((t) => t.name);
-        const added = names.find((n) => !current.includes(n));
-        const removed = current.find((n) => names.includes(n));
-        const tag = added ? tags.find((t) => t.name === added) : undefined;
-        if (tag) {
-          onChange([...selected, tag.id!]);
-        } else if (removed) {
-          const t = tags.find((x) => x.name === removed);
-          if (t) onChange(selected.filter((id) => id !== t.id));
+        const ids = (value as string[]).map(Number);
+        const added = ids.find((id) => !selected.includes(id));
+        const removed = selected.find((id) => !ids.includes(id));
+        if (added !== undefined) {
+          onChange([...selected, added]);
+        } else if (removed !== undefined) {
+          onChange(selected.filter((id) => id !== removed));
         }
       }}
     >
@@ -208,7 +202,7 @@ export function TagsCombobox({
       <ComboboxContent anchor={anchor} container={portalContainer}>
         <ComboboxList className="data-empty:p-1">
           {matches.map((t) => (
-            <ComboboxItem key={t.id} value={t.name}>
+            <ComboboxItem key={t.id} value={String(t.id)}>
               <span className={`size-2 shrink-0 rounded-full ${t.color}`} />
               {t.name}
             </ComboboxItem>
@@ -217,7 +211,12 @@ export function TagsCombobox({
             <ComboboxSeparator />
           )}
           {canCreate && (
-            <ComboboxItem value={`create:${q}`} onClick={createTag} className="">
+            <ComboboxItem
+              key={`create:${q}`}
+              value={`create:${q}`}
+              onClick={createTag}
+              className=""
+            >
               <PlusIcon className="size-3.5 " />
               Create <span className="font-medium">“{query.trim()}”</span>
             </ComboboxItem>
