@@ -4,13 +4,22 @@ import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import { CircleCheckIcon, GitBranchIcon, XIcon } from 'lucide-react'
 import { useState } from 'react'
-import type { Card as CardData } from '@/lib/db'
+import type { Card as CardData, Tag } from '@/lib/db'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { TagsCombobox } from '@/components/tags-combobox'
 
 interface UpstreamDialogProps {
   cardId: number | null
   cards: CardData[]
   columns: { id: string; title: string }[]
+  /** All tags for this card's board. */
+  tags: Tag[]
+  /** Write-through: a newly created tag row (persisted in DB) joins the board's tag list. */
+  onTagCreated: (tag: Tag) => void
+  /** Ids of tags referenced by any card (powers the remove-unused action). */
+  usedTagIds: number[]
+  /** Write-through: unused tags were deleted; parent drops them from its tag list. */
+  onUnusedTagsDeleted: (ids: number[]) => void
   open: boolean
   onOpenChange: (open: boolean) => void
   /** Write-through updates so the board's local state is the single render truth. */
@@ -18,7 +27,7 @@ interface UpstreamDialogProps {
   onDeleteCard: (id: number) => void
 }
 
-export function UpstreamDialog({ cardId, cards, columns, open, onOpenChange, onUpdateCard, onDeleteCard }: UpstreamDialogProps) {
+export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, usedTagIds, onUnusedTagsDeleted, open, onOpenChange, onUpdateCard, onDeleteCard }: UpstreamDialogProps) {
   const [selected, setSelected] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -71,20 +80,31 @@ export function UpstreamDialog({ cardId, cards, columns, open, onOpenChange, onU
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="inset-0 flex h-dvh max-w-none translate-x-0 translate-y-0 flex-col rounded-none border-none bg-background p-6 sm:max-w-none">
+      <DialogContent className="flex h-dvh max-w-none flex-col rounded-none border-none bg-background p-6 sm:max-w-none">
         <DialogHeader>
           <Input
             value={card.title}
             onChange={e => onUpdateCard(card.id!, { title: e.target.value })}
-            className="border-none bg-transparent px-0 text-lg font-semibold shadow-none focus-visible:ring-0"
+            className="border-none bg-transparent px-0 text-base md:text-lg font-semibold shadow-none focus-visible:ring-0"
             aria-label="Card title"
           />
           <DialogTitle className="sr-only">{card.title} upstream tasks</DialogTitle>
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <GitBranchIcon className="size-4" />
-            <span>
-              {done} of {upstreams.length} upstream tasks finished ({pct}%)
-            </span>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <GitBranchIcon className="size-4" />
+              <span>
+                {done} of {upstreams.length} upstream tasks finished ({pct}%)
+              </span>
+            </div>
+            <TagsCombobox
+              boardId={card.boardId}
+              tags={tags}
+              onTagCreated={onTagCreated}
+              usedTagIds={usedTagIds}
+              onUnusedTagsDeleted={onUnusedTagsDeleted}
+              selected={card.tagIds}
+              onChange={tagIds => onUpdateCard(card.id!, { tagIds })}
+            />
           </div>
         </DialogHeader>
 

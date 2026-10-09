@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import type { KanbanMoveEvent } from '@/components/ui/kanban'
 
-import { db, DEFAULT_COLUMNS, type Card as CardData, type BoardRow } from '@/lib/db'
+import { db, DEFAULT_COLUMNS, type Card as CardData, type BoardRow, type Tag } from '@/lib/db'
 import { cn } from '@/lib/utils'
 import {
   Kanban,
@@ -41,6 +41,7 @@ interface BoardColumnProps extends Omit<ComponentProps<typeof KanbanColumn>, 'ch
   accent: string
   cards: CardData[]
   cardById: Map<number, CardData>
+  tagById: Map<number, Tag>
   finishedColumnId: string
   blockedByUpstream: (id: number) => boolean
   onCardClick: (id: number) => void
@@ -53,6 +54,7 @@ function BoardColumn({
   accent,
   cards,
   cardById,
+  tagById,
   finishedColumnId,
   blockedByUpstream,
   onCardClick,
@@ -101,7 +103,7 @@ function BoardColumn({
         </div>
         <KanbanColumnContent value={column.id} className="mt-2 min-h-80 gap-2.5">
           {cards.map(card => (
-            <BoardCard key={String(card.id)} card={card} cardById={cardById} finishedColumnId={finishedColumnId} onEdit={overlay ? undefined : onCardClick} />
+            <BoardCard key={String(card.id)} card={card} cardById={cardById} tagById={tagById} finishedColumnId={finishedColumnId} onEdit={overlay ? undefined : onCardClick} />
           ))}
         </KanbanColumnContent>
       </div>
@@ -112,14 +114,20 @@ function BoardColumn({
 export function Board({ boardId }: { boardId: number }) {
   const [cards, setCards] = useState<CardData[]>([])
   const [board, setBoard] = useState<BoardRow | null>(null)
+  const [tags, setTags] = useState<Tag[]>([])
 
   // DB is read once on mount; local state is the render truth and every mutation
   // writes through to IndexedDB in parallel (fire-and-forget).
   useEffect(() => {
     void (async () => {
-      const [p, cs] = await Promise.all([db.boards.get(boardId), db.cards.where('boardId').equals(boardId).toArray()])
+      const [p, cs, ts] = await Promise.all([
+        db.boards.get(boardId),
+        db.cards.where('boardId').equals(boardId).toArray(),
+        db.tags.where('boardId').equals(boardId).toArray()
+      ])
       setBoard(p ?? null)
       setCards(cs.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt))
+      setTags(ts.sort((a, b) => a.name.localeCompare(b.name)))
     })()
   }, [boardId])
 
@@ -132,6 +140,7 @@ export function Board({ boardId }: { boardId: number }) {
   const finishedColumnId = columns[columns.length - 1].id
 
   const cardById = useMemo(() => new Map(cards.map(c => [c.id!, c])), [cards])
+  const tagById = useMemo(() => new Map(tags.map(t => [t.id!, t])), [tags])
 
   // Column grouping used by both the board render and the drag handlers.
   const cardsByColumn = useMemo(() => groupByColumn(cards, columns), [cards, columns])
@@ -159,6 +168,7 @@ export function Board({ boardId }: { boardId: number }) {
       title: 'New card',
       order: cardsByColumn[column]?.length ?? 0,
       upstreamIds: [],
+      tagIds: [],
       createdAt: Date.now()
     }
     setCards(cs => [...cs, card])
@@ -303,6 +313,7 @@ export function Board({ boardId }: { boardId: number }) {
                 accent={ACCENTS[i % ACCENTS.length]}
                 cards={cardsByColumn[col.id] ?? []}
                 cardById={cardById}
+                tagById={tagById}
                 finishedColumnId={finishedColumnId}
                 blockedByUpstream={blockedByUpstream}
                 onCardClick={setDialogCardId}
@@ -321,6 +332,7 @@ export function Board({ boardId }: { boardId: number }) {
                     accent={ACCENTS[idx >= 0 ? idx % ACCENTS.length : 0]}
                     cards={cardsByColumn[activeValue] ?? []}
                     cardById={cardById}
+                    tagById={tagById}
                     finishedColumnId={finishedColumnId}
                     blockedByUpstream={blockedByUpstream}
                     onCardClick={setDialogCardId}
@@ -330,7 +342,7 @@ export function Board({ boardId }: { boardId: number }) {
                 )
               }
               const card = cardById.get(Number(activeValue))
-              return card ? <BoardCard card={card} cardById={cardById} finishedColumnId={finishedColumnId} isOverlay /> : null
+              return card ? <BoardCard card={card} cardById={cardById} tagById={tagById} finishedColumnId={finishedColumnId} isOverlay /> : null
             }}
           </KanbanOverlay>
         </Kanban>
@@ -340,6 +352,10 @@ export function Board({ boardId }: { boardId: number }) {
         cardId={dialogCardId}
         cards={cards}
         columns={columns}
+        tags={tags}
+        onTagCreated={tag => setTags(ts => [...ts, tag].sort((a, b) => a.name.localeCompare(b.name)))}
+        usedTagIds={cards.flatMap(c => c.tagIds)}
+        onUnusedTagsDeleted={ids => setTags(ts => ts.filter(t => !ids.includes(t.id!)))}
         open={dialogCardId !== null}
         onOpenChange={open => {
           if (!open) setDialogCardId(null)

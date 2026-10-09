@@ -7,6 +7,14 @@ export type BoardRow = {
   createdAt: number
 }
 
+export type Tag = {
+  id?: number
+  boardId: number
+  name: string
+  color: string
+  createdAt: number
+}
+
 export type Card = {
   id: number
   boardId: number
@@ -14,11 +22,13 @@ export type Card = {
   title: string
   order: number
   upstreamIds: number[]
+  tagIds: number[]
   createdAt: number
 }
 
 const db = new Dexie('kanban') as Dexie & {
   boards: EntityTable<BoardRow, 'id'>
+  tags: EntityTable<Tag, 'id'>
   cards: EntityTable<Card, 'id'>
 }
 
@@ -36,6 +46,19 @@ db.version(2)
       delete card.profileId
     })
     await tx.table('profiles').delete(oldBoards.map((b: BoardRow) => b.id!))
+  })
+
+db.version(3)
+  .stores({
+    boards: '++id, createdAt',
+    tags: '++id, boardId, [boardId+name]',
+    cards: '++id, boardId, column, [boardId+column]',
+  })
+  .upgrade(async tx => {
+    // v2 → v3: add tagIds to every card.
+    await tx.table('cards').toCollection().modify((card: Card & { tagIds?: number[] }) => {
+      card.tagIds ??= []
+    })
   })
 
 // Rightmost column is the finished state (leftmost for RTL boards): cards become draggable once all their upstream cards are here.

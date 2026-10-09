@@ -7,17 +7,18 @@ import { Progress } from '@/components/ui/progress'
 import { KanbanItem, KanbanItemHandle } from '@/components/ui/kanban'
 import { cn } from '@/lib/utils'
 import { GitBranchIcon } from 'lucide-react'
-import type { Card as CardData } from '@/lib/db'
+import type { Card as CardData, Tag } from '@/lib/db'
 
 interface BoardCardProps extends Omit<ComponentProps<typeof KanbanItem>, 'value' | 'children'> {
   card: CardData
   cardById: Map<number, CardData>
+  tagById: Map<number, Tag>
   finishedColumnId: string
   isOverlay?: boolean
   onEdit?: (id: number) => void
 }
 
-export function BoardCard({ card, cardById, finishedColumnId, isOverlay, onEdit, ...props }: BoardCardProps) {
+export function BoardCard({ card, cardById, tagById, finishedColumnId, isOverlay, onEdit, ...props }: BoardCardProps) {
   const upstreams = card.upstreamIds.map(id => cardById.get(id)).filter(c => c) as CardData[]
   const doneCount = upstreams.filter(c => c.column === finishedColumnId).length
   const pct = upstreams.length ? Math.round((doneCount / upstreams.length) * 100) : null
@@ -26,7 +27,7 @@ export function BoardCard({ card, cardById, finishedColumnId, isOverlay, onEdit,
   const inner = (
     <Card
       size="sm"
-      // onClick={onEdit ? () => onEdit(card.id!) : undefined}
+      onClick={onEdit ? () => onEdit(card.id!) : undefined}
       className={cn(
         'overflow-hidden shadow-none transition-all rotate-0',
         !isOverlay && 'hover:-translate-y-0.5 cursor-pointer',
@@ -35,6 +36,25 @@ export function BoardCard({ card, cardById, finishedColumnId, isOverlay, onEdit,
     >
       <CardContent className="space-y-3">
         <h3 className="line-clamp-2 text-sm leading-snug font-semibold">{card.title}</h3>
+
+        {card.tagIds.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {card.tagIds.map(id => {
+              const tag = tagById.get(id)
+              if (!tag) return null
+              return (
+                <span
+                  key={id}
+                  className="text-muted-foreground flex h-5 items-center gap-1 rounded-sm bg-muted px-1.5 text-xs font-medium whitespace-nowrap"
+                  aria-label={`Tag ${tag.name}`}
+                >
+                  <span className={`size-1.5 rounded-full ${tag.color}`} />
+                  {tag.name}
+                </span>
+              )
+            })}
+          </div>
+        )}
 
         {pct === null ? (
           <p className="text-muted-foreground text-[11px]">No upstream tasks</p>
