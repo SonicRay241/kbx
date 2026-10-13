@@ -2,6 +2,7 @@ import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps }
 import type { KanbanMoveEvent } from '@/components/ui/kanban'
 
 import { db, DEFAULT_COLUMNS, type Card as CardData, type BoardRow, type Tag } from '@/lib/db'
+import { createCard, updateCard, deleteCard, moveCards, migrateCardsColumn, setBoardColumns } from '@/lib/mutations'
 import { cn } from '@/lib/utils'
 import {
   Kanban,
@@ -159,10 +160,12 @@ export function Board({ boardId }: { boardId: number }) {
   }
 
   function handleAddCard(column: string) {
+    // negative ids never collide with Dexie's auto-increment — the temp id only
+    // needs to survive until the write resolves and the true row replaces it.
+    const tempId = -Date.now()
     const card: CardData = {
-      // negative ids never collide with Dexie's auto-increment — the temp id only
-      // needs to survive until the write resolves and the true row replaces it.
-      id: -Date.now(),
+      id: tempId,
+      uid: '', // minted by createCard; swap lands before any drag can use it
       boardId,
       column,
       title: 'New card',
@@ -172,11 +175,9 @@ export function Board({ boardId }: { boardId: number }) {
       createdAt: Date.now()
     }
     setCards(cs => [...cs, card])
-    // Dexie auto-increments only when the key is absent — strip the temp id and let
-    // add() generate the real one, then swap it into state.
-    const { id: _tmp, ...row } = card
-    void db.cards.add(row).then(id => {
-      setCards(cs => cs.map(c => (c.id === card.id ? { ...c, id } : c)))
+    const { id: _tmp, uid: _uid, ...row } = card
+    void createCard(row).then(signed => {
+      setCards(cs => cs.map(c => (c.id === card.id ? { ...c, id: signed.id!, uid: signed.uid } : c)))
     })
   }
 
@@ -237,7 +238,7 @@ export function Board({ boardId }: { boardId: number }) {
     if (!commit) return
 
     setCards(Object.values(nextRecord).flat())
-    void db.cards.bulkUpdate(nextRecord[overContainer].map((card, order) => ({ key: card.id!, changes: { order, column: card.column } })))
+    void moveCards(nextRecord[overContainer].map((card, order) => ({ key: card.id!, changes: { order, column: card.column } })))
   }
 
   // A new drag always starts from the current layout — compose previews against that.
@@ -261,15 +262,11 @@ export function Board({ boardId }: { boardId: number }) {
       action: () => {
         const nextColumns = columns.filter(c => c.id !== columnId)
         setBoard(p => (p ? { ...p, columns: nextColumns } : p))
-        if (moved) {
+        if (moved && migrateTo) {
           setCards(cs => cs.map(c => (c.column === columnId ? { ...c, column: migrateTo! } : c)))
+          void migrateCardsColumn(boardId, columnId, migrateTo)
         }
-        void db.transaction('rw', db.cards, db.boards, async () => {
-          if (moved && migrateTo) {
-            await db.cards.where('[boardId+column]').equals([boardId, columnId]).modify({ column: migrateTo })
-          }
-          await db.boards.update(boardId, { columns: nextColumns })
-        })
+        void setBoardColumns(boardId, nextColumns)
         perform()
       }
     })
@@ -293,7 +290,7 @@ export function Board({ boardId }: { boardId: number }) {
             setCards(Object.values(next).flat())
             const nextColumns = Object.keys(next).map(id => columns.find(c => c.id === id)!)
             setBoard(p => (p ? { ...p, columns: nextColumns } : p))
-            void db.boards.update(boardId, { columns: nextColumns })
+            void setBoardColumns(boardId, nextColumns)
           }}
           getItemValue={item => String(item.id)}
           onMove={handleMove}
@@ -362,11 +359,11 @@ export function Board({ boardId }: { boardId: number }) {
         }}
         onUpdateCard={(id, changes) => {
           setCards(cs => cs.map(c => (c.id === id ? { ...c, ...changes } : c)))
-          void db.cards.update(id, changes)
+          void updateCard(id, changes)
         }}
         onDeleteCard={id => {
           setCards(cs => cs.filter(c => c.id !== id))
-          void db.cards.delete(id)
+          void deleteCard(id)
         }}
       />
 
@@ -376,7 +373,7 @@ export function Board({ boardId }: { boardId: number }) {
         columns={columns}
         onChangeColumns={next => {
           setBoard(p => (p ? { ...p, columns: next } : p))
-          void db.boards.update(boardId, { columns: next })
+          void setBoardColumns(boardId, next)
         }}
         onRequestRemove={removeColumn}
       />

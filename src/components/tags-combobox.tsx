@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PlusIcon, Trash2Icon, XIcon } from "lucide-react";
-import { db, type Tag } from "@/lib/db";
+import type { Tag } from "@/lib/db";
+import { createTag as createTagRow, deleteTags as deleteTagRows } from "@/lib/mutations";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
   Combobox,
@@ -100,24 +101,11 @@ export function TagsCombobox({
     const name = query.trim();
     if (!name || exactMatch) return;
     creatingRef.current = true;
-    void (
-      db.tags.add({
-        boardId,
-        name,
-        color: nextColor(tags),
-        createdAt: Date.now(),
-      }) as Promise<number>
-    )
-      .then((id) => {
+    void createTagRow({ boardId, name, color: nextColor(tags) })
+      .then((tag) => {
         creatingRef.current = false;
-        onTagCreated({
-          id,
-          boardId,
-          name,
-          color: nextColor(tags),
-          createdAt: Date.now(),
-        });
-        onChange([...selected, id]);
+        onTagCreated(tag);
+        onChange([...selected, tag.id!]);
         setQuery("");
       })
       .catch(() => {
@@ -261,7 +249,7 @@ export function TagsCombobox({
         }
         onConfirm={() => {
           const ids = unusedTags.map((t) => t.id!);
-          void db.tags.bulkDelete(ids);
+          void deleteTagRows(ids);
           onUnusedTagsDeleted(ids);
         }}
       />

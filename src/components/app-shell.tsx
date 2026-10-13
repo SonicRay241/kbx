@@ -3,9 +3,11 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 
 import { db, DEFAULT_COLUMNS } from "@/lib/db";
+import { createBoard as createBoardRow, renameBoard as renameBoardRow, deleteBoard as deleteBoardRow } from "@/lib/mutations";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupAction,
   SidebarGroupContent,
@@ -29,6 +31,7 @@ import {
   LayersPlusIcon,
 } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { SyncPanel } from "@/components/sync/sync-panel";
 import {
   Dialog,
   DialogContent,
@@ -124,12 +127,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const createBoard = () => {
     const name = newName.trim();
     if (!name) return;
-    void db.boards
-      .add({
-        name,
-        columns: DEFAULT_COLUMNS.map((c) => ({ ...c })),
-        createdAt: Date.now(),
-      })
+    void createBoardRow(name, DEFAULT_COLUMNS)
       .then((id) => {
         setNewName("");
         setCreateOpen(false);
@@ -217,7 +215,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                                 onBlur={(e) => {
                                   const name = e.target.value.trim();
                                   if (name && name !== p.name)
-                                    void db.boards.update(p.id!, { name });
+                                    void renameBoardRow(p.id!, name);
                                   setEditing(null);
                                 }}
                                 onKeyDown={(e) => {
@@ -273,6 +271,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               </SidebarGroupContent>
             </SidebarGroup>
           </SidebarContent>
+          <SidebarFooter className="pt-0">
+            <SyncPanel />
+          </SidebarFooter>
         </Sidebar>
         <SidebarInset>
           {children}
@@ -320,10 +321,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           onConfirm={() => {
             if (!pendingDelete) return;
             const wasActive = pendingDelete.id === activeId;
-            void db.transaction("rw", db.cards, db.boards, async () => {
-              await db.cards.where("boardId").equals(pendingDelete.id).delete();
-              await db.boards.delete(pendingDelete.id);
-            });
+            void deleteBoardRow(pendingDelete.id);
             setPendingDelete(null);
             if (wasActive) void navigate({ to: "/" });
           }}

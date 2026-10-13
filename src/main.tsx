@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { RouterProvider, createRouter } from '@tanstack/react-router'
 import { routeTree } from './routeTree.gen'
+import { installRefocusSync } from './sync/sync-engine'
 
 import './index.css'
 
@@ -12,6 +13,8 @@ declare module '@tanstack/react-router' {
     router: typeof router
   }
 }
+
+installRefocusSync()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

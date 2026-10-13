@@ -2,21 +2,30 @@ import Dexie, { type EntityTable } from 'dexie'
 
 export type BoardRow = {
   id?: number
+  /** Cross-device identity: UUID minted at creation, travels with sync. */
+  uid: string
   name: string
   columns: { id: string; title: string }[]
   createdAt: number
+  updatedAt?: number
+  /** Per-field last-write timestamps for LWW merge (sync metadata). */
+  fieldTimestamps?: Record<string, number>
 }
 
 export type Tag = {
   id?: number
+  uid: string
   boardId: number
   name: string
   color: string
   createdAt: number
+  updatedAt?: number
+  fieldTimestamps?: Record<string, number>
 }
 
 export type Card = {
   id: number
+  uid: string
   boardId: number
   column: string
   title: string
@@ -24,12 +33,42 @@ export type Card = {
   upstreamIds: number[]
   tagIds: number[]
   createdAt: number
+  updatedAt?: number
+  fieldTimestamps?: Record<string, number>
+}
+
+/** Per-unit sync bookkeeping: unit id is `<kind>:<uid>`. */
+export type EntitySyncMeta = {
+  id: string
+  /** Whether this device opted the unit into cloud sync. */
+  cloudSynced?: boolean
+  /** When the current opt-in happened; guards against stale opt-out tombstones. */
+  cloudSyncedAt?: number
+  /** Hash of the cloud payload at the last successful push. */
+  lastPushedHash?: string
+  /** Backend file token (Drive file id / WebDAV name) at the last push. */
+  fileId?: string
+}
+
+export type SyncMetaRow = {
+  key: string
+  fileId?: string
+  lastSyncedAt?: string
+}
+
+/** Tombstone for locally deleted entities not yet propagated to the cloud. */
+export type DeletedEntity = {
+  id: string
+  deletedAt: number
 }
 
 const db = new Dexie('kanban') as Dexie & {
   boards: EntityTable<BoardRow, 'id'>
   tags: EntityTable<Tag, 'id'>
   cards: EntityTable<Card, 'id'>
+  entitySyncMeta: EntityTable<EntitySyncMeta, 'id'>
+  syncMeta: EntityTable<SyncMetaRow, 'key'>
+  deletedEntities: EntityTable<DeletedEntity, 'id'>
 }
 
 db.version(2)
@@ -58,6 +97,29 @@ db.version(3)
     // v2 → v3: add tagIds to every card.
     await tx.table('cards').toCollection().modify((card: Card & { tagIds?: number[] }) => {
       card.tagIds ??= []
+    })
+  })
+
+db.version(4)
+  .stores({
+    boards: '++id, createdAt, uid',
+    tags: '++id, boardId, [boardId+name], uid',
+    cards: '++id, boardId, column, [boardId+column], uid',
+    entitySyncMeta: 'id',
+    syncMeta: 'key',
+    deletedEntities: 'id',
+  })
+  .upgrade(async tx => {
+    // v3 → v4: mint cross-device uids for rows that predate sync.
+    const uuid = () => crypto.randomUUID()
+    await tx.table('boards').toCollection().modify((board: BoardRow & { uid?: string }) => {
+      board.uid ??= uuid()
+    })
+    await tx.table('tags').toCollection().modify((tag: Tag & { uid?: string }) => {
+      tag.uid ??= uuid()
+    })
+    await tx.table('cards').toCollection().modify((card: Card & { uid?: string }) => {
+      card.uid ??= uuid()
     })
   })
 
