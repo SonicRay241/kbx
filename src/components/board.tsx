@@ -275,7 +275,7 @@ export function Board({ boardId }: { boardId: number }) {
   if (!board) return null
 
   return (
-    <div className="space-y-4">
+    <div className="w-full space-y-4">
       <div className="flex items-center gap-3">
         <h1 className="text-lg font-semibold">{board.name}</h1>
         <Button variant="outline" size="sm" className="ml-auto" onClick={() => setColumnsOpen(true)}>
