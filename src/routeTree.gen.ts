@@ -12,7 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as OauthCallbackRouteImport } from './routes/oauth-callback'
 import { Route as BoardsBoardIdRouteImport } from './routes/boards/$boardId'
-import { Route as BoardsBoardIdListRouteImport } from './routes/boards/$boardId_.list'
+import { Route as BoardsBoardIdIndexRouteImport } from './routes/boards/$boardId/index'
+import { Route as BoardsBoardIdListRouteImport } from './routes/boards/$boardId/list'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -29,50 +30,61 @@ const BoardsBoardIdRoute = BoardsBoardIdRouteImport.update({
   path: '/boards/$boardId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BoardsBoardIdIndexRoute = BoardsBoardIdIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => BoardsBoardIdRoute,
+} as any)
 const BoardsBoardIdListRoute = BoardsBoardIdListRouteImport.update({
-  id: '/boards/$boardId_/list',
-  path: '/boards/$boardId/list',
-  getParentRoute: () => rootRouteImport,
+  id: '/list',
+  path: '/list',
+  getParentRoute: () => BoardsBoardIdRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/oauth-callback': typeof OauthCallbackRoute
-  '/boards/$boardId': typeof BoardsBoardIdRoute
+  '/boards/$boardId': typeof BoardsBoardIdRouteWithChildren
   '/boards/$boardId/list': typeof BoardsBoardIdListRoute
+  '/boards/$boardId/': typeof BoardsBoardIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/oauth-callback': typeof OauthCallbackRoute
-  '/boards/$boardId': typeof BoardsBoardIdRoute
   '/boards/$boardId/list': typeof BoardsBoardIdListRoute
+  '/boards/$boardId': typeof BoardsBoardIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/oauth-callback': typeof OauthCallbackRoute
-  '/boards/$boardId': typeof BoardsBoardIdRoute
-  '/boards/$boardId_/list': typeof BoardsBoardIdListRoute
+  '/boards/$boardId': typeof BoardsBoardIdRouteWithChildren
+  '/boards/$boardId/list': typeof BoardsBoardIdListRoute
+  '/boards/$boardId/': typeof BoardsBoardIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/oauth-callback' | '/boards/$boardId' | '/boards/$boardId/list'
+    | '/'
+    | '/oauth-callback'
+    | '/boards/$boardId'
+    | '/boards/$boardId/list'
+    | '/boards/$boardId/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/oauth-callback' | '/boards/$boardId' | '/boards/$boardId/list'
+  to: '/' | '/oauth-callback' | '/boards/$boardId/list' | '/boards/$boardId'
   id:
     | '__root__'
     | '/'
     | '/oauth-callback'
     | '/boards/$boardId'
-    | '/boards/$boardId_/list'
+    | '/boards/$boardId/list'
+    | '/boards/$boardId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   OauthCallbackRoute: typeof OauthCallbackRoute
-  BoardsBoardIdRoute: typeof BoardsBoardIdRoute
-  BoardsBoardIdListRoute: typeof BoardsBoardIdListRoute
+  BoardsBoardIdRoute: typeof BoardsBoardIdRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
@@ -98,21 +110,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BoardsBoardIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/boards/$boardId_/list': {
-      id: '/boards/$boardId_/list'
-      path: '/boards/$boardId/list'
+    '/boards/$boardId/': {
+      id: '/boards/$boardId/'
+      path: '/'
+      fullPath: '/boards/$boardId/'
+      preLoaderRoute: typeof BoardsBoardIdIndexRouteImport
+      parentRoute: typeof BoardsBoardIdRoute
+    }
+    '/boards/$boardId/list': {
+      id: '/boards/$boardId/list'
+      path: '/list'
       fullPath: '/boards/$boardId/list'
       preLoaderRoute: typeof BoardsBoardIdListRouteImport
-      parentRoute: typeof rootRouteImport
+      parentRoute: typeof BoardsBoardIdRoute
     }
   }
 }
 
+interface BoardsBoardIdRouteChildren {
+  BoardsBoardIdListRoute: typeof BoardsBoardIdListRoute
+  BoardsBoardIdIndexRoute: typeof BoardsBoardIdIndexRoute
+}
+
+const BoardsBoardIdRouteChildren: BoardsBoardIdRouteChildren = {
+  BoardsBoardIdListRoute: BoardsBoardIdListRoute,
+  BoardsBoardIdIndexRoute: BoardsBoardIdIndexRoute,
+}
+
+const BoardsBoardIdRouteWithChildren = BoardsBoardIdRoute._addFileChildren(
+  BoardsBoardIdRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   OauthCallbackRoute: OauthCallbackRoute,
-  BoardsBoardIdRoute: BoardsBoardIdRoute,
-  BoardsBoardIdListRoute: BoardsBoardIdListRoute,
+  BoardsBoardIdRoute: BoardsBoardIdRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

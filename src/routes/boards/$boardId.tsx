@@ -1,17 +1,95 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createContext, useContext, useState, type ReactNode } from "react";
+import {
+  createFileRoute,
+  Link,
+  Outlet,
+  useLocation,
+} from "@tanstack/react-router";
+import { createPortal } from "react-dom";
+import { cn } from "@/lib/utils";
+import { useLiveQuery } from "dexie-react-hooks";
+import { db } from "@/lib/db";
 
-import { Board } from '@/components/board'
-
-export const Route = createFileRoute('/boards/$boardId')({
+export const Route = createFileRoute("/boards/$boardId")({
   component: BoardRoute,
-})
+});
+
+const BoardHeaderSlotContext = createContext<HTMLDivElement | null>(null);
+
+/**
+ * Portals children into the board layout header, next to the title.
+ * Pages render actions here instead of threading props through the layout.
+ */
+export function BoardHeaderSlot({ children }: { children: ReactNode }) {
+  const target = useContext(BoardHeaderSlotContext);
+  return target ? createPortal(children, target) : null;
+}
+
+function getAnchorPosition(suffix: string | undefined) {
+  switch (suffix) {
+    case "list":
+      return "position-anchor-[--list]";
+
+    default:
+      return "position-anchor-[--board]";
+  }
+}
 
 function BoardRoute() {
-  const { boardId } = Route.useParams()
+  const { boardId } = Route.useParams();
+
+  const board = useLiveQuery(() => db.boards.get(Number(boardId)));
+  const suffix = useLocation({ select: (l) => l.pathname.split("/").at(-1) });
+  const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null);
+
+  if (!board) return "Loading...";
 
   return (
-    <div className="w-full h-full py-4">
-      <Board boardId={Number(boardId)} />
-    </div>
-  )
+    <BoardHeaderSlotContext.Provider value={headerSlot}>
+      <div className="h-full w-full pt-4 flex flex-col">
+        <div className="px-4 space-y-4 pb-4">
+          <h1 className="text-xl font-medium">{board.name}</h1>
+          <div className="flex">
+            <div className="bg-muted shadow-xs isolate flex rounded-md border h-7">
+              {/* One pill, re-anchored to the active tab. The anchor-name lives on each link. */}
+              <span
+                aria-hidden
+                className={cn(
+                  "bg-card border pointer-events-none absolute -z-10 rounded-sm transition-all",
+                  "top-[anchor(top)] right-[anchor(right)] bottom-[anchor(bottom)] left-[anchor(left)]",
+                  getAnchorPosition(suffix),
+                )}
+              />
+              <Link
+                to="/boards/$boardId"
+                params={{ boardId: String(boardId) }}
+                className={cn(
+                  "flex items-center justify-center text-muted-foreground anchor-[--board] rounded-md px-4 h-full text-xs transition-all",
+                )}
+                activeProps={{ className: "text-card-foreground" }}
+                activeOptions={{ exact: true }}
+              >
+                Board
+              </Link>
+              <Link
+                to="/boards/$boardId/list"
+                params={{ boardId: String(boardId) }}
+                className={cn(
+                  "flex items-center justify-center text-muted-foreground anchor-[--list] rounded-md px-4 h-full text-xs transition-all",
+                )}
+                activeProps={{ className: "text-card-foreground" }}
+              >
+                List
+              </Link>
+            </div>
+            <div
+              ref={setHeaderSlot}
+              className="ml-auto flex items-center gap-2"
+            />
+          </div>
+        </div>
+        <Outlet />
+      </div>
+    </BoardHeaderSlotContext.Provider>
+  );
 }

@@ -1,5 +1,4 @@
 import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
-import { Link } from '@tanstack/react-router'
 import type { KanbanMoveEvent } from '@/components/ui/kanban'
 
 import { db, DEFAULT_COLUMNS, type Card as CardData, type BoardRow, type Tag } from '@/lib/db'
@@ -22,6 +21,7 @@ import { UpstreamDialog } from '@/components/upstream-dialog'
 import { ColumnsDialog } from '@/components/columns-dialog'
 import { ArchiveDialog } from '@/components/archive-dialog'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { BoardHeaderSlot } from '@/routes/boards/$boardId'
 
 const ACCENTS = [
   'bg-sky-600 dark:bg-sky-400',
@@ -74,7 +74,7 @@ function BoardColumn({
     <KanbanColumn
       value={column.id}
       className={cn(
-        'rounded-lg',
+        'rounded-lg bg-muted border h-full',
         vetoDrop && 'bg-destructive/10 ring-destructive/40 ring-2 ring-inset'
       )}
       {...props}
@@ -86,7 +86,7 @@ function BoardColumn({
             <h2 className="truncate text-sm font-semibold">{column.title}</h2>
           </div>
           <div className="flex items-center gap-1.5">
-            <Badge variant="outline">{cards.length}</Badge>
+            <Badge variant="outline" className='bg-card'>{cards.length}</Badge>
             {!overlay && (
               <Button
                 variant="ghost"
@@ -296,32 +296,16 @@ export function Board({ boardId }: { boardId: number }) {
   if (!board) return null
 
   return (
-    <div className="grid grid-cols-1 grid-rows-[1.75rem_1fr] w-full gap-4 h-full">
-      <div className="flex items-center gap-3 h-7 px-4">
-        <h1 className="text-lg font-semibold">{board.name}</h1>
-        {/* ponytail: basic nav buttons, user will style */}
-        <Link
-          to="/boards/$boardId"
-          params={{ boardId: String(boardId) }}
-          className="text-muted-foreground ml-auto rounded-md px-1.5 py-1 text-xs hover:underline"
-        >
-          Board
-        </Link>
-        <Link
-          to="/boards/$boardId/list"
-          params={{ boardId: String(boardId) }}
-          className="text-muted-foreground rounded-md px-1.5 py-1 text-xs hover:underline"
-        >
-          List
-        </Link>
+    <div className="w-full h-full gap-4">
+      <BoardHeaderSlot>
         <Button variant="outline" size="sm" onClick={() => setArchiveOpen(true)}>
           Archive
         </Button>
         <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>
           Columns
         </Button>
-      </div>
-      <div className="overflow-x-auto px-4">
+      </BoardHeaderSlot>
+      <div className="overflow-x-auto h-full">
         <Kanban
           value={cardsByColumn}
           onValueChange={next => {
@@ -336,7 +320,7 @@ export function Board({ boardId }: { boardId: number }) {
           onDragBegin={resetDragLayout}
           onDragCancel={restoreDragStart}
           isDropVetoed={(activeId, containerId) => containerId === finishedColumnId && blockedByUpstream(activeId)}
-          className="mx-auto w-full max-w-5xl h-full"
+          className="relative px-4 w-fit h-full"
         >
           <KanbanBoard
             className="grid auto-rows-fr gap-3"

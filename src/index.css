@@ -155,3 +155,17 @@
     @apply font-sans;
   }
 }
+
+/* tailwind 4.3 rejects bare strings in --value(); arbitrary form keeps `anchor-[--name]` generic */
+@utility anchor-* {
+  anchor-name: --value([*]);
+}
+@utility position-anchor-* {
+  position-anchor: --value([*]);
+}
+@utility position-area-* {
+  position-area: --value([*]);
+}
+@utility try-fallbacks-* {
+  position-try-fallbacks: --value([*]);
+}
