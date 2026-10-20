@@ -6,6 +6,8 @@ export type BoardRow = {
   uid: string
   name: string
   columns: { id: string; title: string }[]
+  /** Done cards completed before this instant are archived (hidden on the board, listed on /list). 0 = never archived. */
+  archiveCutoff: number
   createdAt: number
   updatedAt?: number
   /** Per-field last-write timestamps for LWW merge (sync metadata). */
@@ -32,6 +34,8 @@ export type Card = {
   order: number
   upstreamIds: number[]
   tagIds: number[]
+  /** Set when the card enters the finished column; cleared on leaving it. */
+  completedAt: number | null
   createdAt: number
   updatedAt?: number
   fieldTimestamps?: Record<string, number>
@@ -120,6 +124,25 @@ db.version(4)
     })
     await tx.table('cards').toCollection().modify((card: Card & { uid?: string }) => {
       card.uid ??= uuid()
+    })
+  })
+
+db.version(5)
+  .stores({
+    boards: '++id, createdAt, uid',
+    tags: '++id, boardId, [boardId+name], uid',
+    cards: '++id, boardId, column, [boardId+column], uid',
+    entitySyncMeta: 'id',
+    syncMeta: 'key',
+    deletedEntities: 'id',
+  })
+  .upgrade(async tx => {
+    // v4 → v5: archive feature — completedAt on cards, archiveCutoff on boards.
+    await tx.table('cards').toCollection().modify((card: Card & { completedAt?: number | null }) => {
+      card.completedAt ??= null
+    })
+    await tx.table('boards').toCollection().modify((board: BoardRow & { archiveCutoff?: number }) => {
+      board.archiveCutoff ??= 0
     })
   })
 

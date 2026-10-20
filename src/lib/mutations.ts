@@ -29,9 +29,10 @@ export async function createBoard(name: string, columns: BoardRow['columns']): P
     uid: uuid(),
     name,
     columns: columns.map((c) => ({ ...c })),
+    archiveCutoff: 0,
     createdAt: now,
     updatedAt: now,
-    fieldTimestamps: { name: now, columns: now },
+    fieldTimestamps: { name: now, columns: now, archiveCutoff: now },
   }
   board.id = await db.boards.add(board)
   scheduleSync()
@@ -72,22 +73,26 @@ export async function deleteBoard(id: number): Promise<void> {
   scheduleSync()
 }
 
-export async function createCard(input: Omit<Card, 'id' | 'uid'>): Promise<Card> {
+export async function createCard(input: Omit<Card, 'id' | 'uid' | 'completedAt'>): Promise<Card> {
   const now = Date.now()
-  const { id, ...rest } = input as Card
-  const card: Omit<Card, 'id'> = { ...rest, uid: uuid(), createdAt: input.createdAt || now, updatedAt: now }
-  void id
-  card.fieldTimestamps = {
-    column: now,
-    title: now,
-    order: now,
-    upstreamIds: now,
-    tagIds: now,
+  const card: Omit<Card, 'id'> = {
+    ...input,
+    completedAt: null,
+    uid: uuid(),
+    createdAt: input.createdAt || now,
+    updatedAt: now,
+    fieldTimestamps: {
+      column: now,
+      title: now,
+      order: now,
+      upstreamIds: now,
+      tagIds: now,
+      completedAt: now,
+    },
   }
   const newId = await db.cards.add(card as Card)
-  const signed = { ...card, id: newId } as Card
   scheduleSync()
-  return signed
+  return { ...card, id: newId } as Card
 }
 
 /** General card edit (title, tags, upstream list). */
@@ -96,18 +101,40 @@ export async function updateCard(id: number, changes: Partial<Omit<Card, 'id' | 
   scheduleSync()
 }
 
-/** Move/reorder: order + column change, stamped for LWW. */
-export async function moveCards(changes: { key: number; changes: { order: number; column?: string } }[]): Promise<void> {
+/** Move/reorder: order + column change, stamped for LWW. completedAt flips
+ * with transitions across the finished column (set on entering, cleared on
+ * leaving it). Reorders (no column change) leave completedAt untouched. */
+export async function moveCards(changes: { key: number; changes: { order: number; column?: string } }[], finishedColumnId?: string): Promise<void> {
   const now = Date.now()
+  const keys = changes.map(c => c.key)
+  const prev = await db.cards.bulkGet(keys)
+  const prevById = new Map<number, Card>()
+  for (const row of prev) {
+    if (row) prevById.set(row.id, row)
+  }
   await db.cards.bulkUpdate(
-    changes.map(({ key, changes: c }) => ({
-      key,
-      changes: {
-        ...c,
-        updatedAt: now,
-        fieldTimestamps: { order: now, ...(c.column ? { column: now } : {}) },
-      },
-    })),
+    changes.map(({ key, changes: c }) => {
+      const prior = prevById.get(key)
+      const wasFinished = prior?.column === finishedColumnId
+      const isFinished = c.column !== undefined && c.column === finishedColumnId
+      const transition = c.column !== undefined && isFinished !== wasFinished
+      return {
+        key,
+        changes: {
+          ...c,
+          // A pure reorder keeps completedAt as-is (undefined → untouched);
+          // a column change rewrites it per the transition above.
+          ...(c.column !== undefined ? { completedAt: isFinished ? now : null } : {}),
+          updatedAt: now,
+          fieldTimestamps: {
+            order: now,
+            ...(c.column !== undefined
+              ? { column: now, ...(transition ? { completedAt: now } : {}) }
+              : {}),
+          },
+        },
+      }
+    }),
   )
   scheduleSync()
 }
@@ -128,17 +155,29 @@ export async function deleteCard(id: number): Promise<void> {
   scheduleSync()
 }
 
-/** Column removal migration: bulk-move cards between columns (stamped). */
-export async function migrateCardsColumn(boardId: number, from: string, to: string): Promise<void> {
+/** Column removal migration: bulk-move cards between columns (stamped,
+ * completedAt flips when migrating into/out of the finished column). */
+export async function migrateCardsColumn(boardId: number, from: string, to: string, finishedColumnId?: string): Promise<void> {
   const now = Date.now()
+  const completing = finishedColumnId !== undefined && to === finishedColumnId
+  // When the migrated-from column IS the finished column the cards lose their
+  // done state (they move into a non-finished column).
+  const completingFlip = finishedColumnId !== undefined && from === finishedColumnId
   await db.cards
     .where('[boardId+column]')
     .equals([boardId, from])
     .modify((card: Card) => {
       card.column = to
+      card.completedAt = completing ? now : completingFlip ? null : card.completedAt
       card.updatedAt = now
-      card.fieldTimestamps = { ...card.fieldTimestamps, column: now }
+      card.fieldTimestamps = { ...card.fieldTimestamps, column: now, completedAt: now }
     })
+  scheduleSync()
+}
+
+/** Archive: set the board's done-card cutoff (0 = keep everything). */
+export async function setBoardArchiveCutoff(boardId: number, cutoff: number): Promise<void> {
+  await db.boards.update(boardId, stamped({ archiveCutoff: cutoff }) as unknown as Partial<BoardRow>)
   scheduleSync()
 }
 

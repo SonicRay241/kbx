@@ -127,8 +127,8 @@ export function installRefocusSync(): void {
 type UnitKind = 'board' | 'card' | 'tag'
 
 const MERGEABLE_FIELDS: Record<UnitKind, readonly string[]> = {
-  board: ['name', 'columns'],
-  card: ['column', 'title', 'order', 'upstreamIds', 'tagIds'],
+  board: ['name', 'columns', 'archiveCutoff'],
+  card: ['column', 'title', 'order', 'upstreamIds', 'tagIds', 'completedAt'],
   tag: ['name', 'color'],
 }
 
@@ -564,6 +564,7 @@ async function putUnitRow(kind: UnitKind, uid: string, json: string, entryUpdate
       uid,
       name: typeof fields.name === 'string' ? fields.name : 'Untitled',
       columns: Array.isArray(fields.columns) ? (fields.columns as BoardRow['columns']) : [],
+      archiveCutoff: Number(fields.archiveCutoff ?? 0) || 0,
       createdAt: fallbackCreated,
       updatedAt: doc.rowTs || entryUpdatedAt,
       fieldTimestamps: doc.ts,
@@ -580,6 +581,7 @@ async function putUnitRow(kind: UnitKind, uid: string, json: string, entryUpdate
       order: Number(fields.order ?? 0),
       upstreamIds: asRefArray(fields.upstreamIds, refs.cardIdByUid),
       tagIds: asRefArray(fields.tagIds, refs.tagIdByUid),
+      completedAt: typeof fields.completedAt === 'number' ? fields.completedAt : null,
       createdAt: fallbackCreated,
       updatedAt: doc.rowTs || entryUpdatedAt,
       fieldTimestamps: doc.ts,

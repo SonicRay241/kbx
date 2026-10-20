@@ -10,7 +10,7 @@ function BoardRoute() {
   const { boardId } = Route.useParams()
 
   return (
-    <div className="w-full p-4">
+    <div className="w-full h-full py-4">
       <Board boardId={Number(boardId)} />
     </div>
   )

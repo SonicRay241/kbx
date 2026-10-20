@@ -1,4 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
+import { Link } from '@tanstack/react-router'
 import type { KanbanMoveEvent } from '@/components/ui/kanban'
 
 import { db, DEFAULT_COLUMNS, type Card as CardData, type BoardRow, type Tag } from '@/lib/db'
@@ -19,6 +20,7 @@ import { GripVerticalIcon, PlusIcon } from 'lucide-react'
 import { BoardCard } from '@/components/board-card'
 import { UpstreamDialog } from '@/components/upstream-dialog'
 import { ColumnsDialog } from '@/components/columns-dialog'
+import { ArchiveDialog } from '@/components/archive-dialog'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 
 const ACCENTS = [
@@ -134,17 +136,35 @@ export function Board({ boardId }: { boardId: number }) {
 
   const [dialogCardId, setDialogCardId] = useState<number | null>(null)
   const [columnsOpen, setColumnsOpen] = useState(false)
+  const [archiveOpen, setArchiveOpen] = useState(false)
   const [confirm, setConfirm] = useState<{ title: string; description: string; action: () => void } | null>(null)
 
   const columns = board?.columns?.length ? board.columns : DEFAULT_COLUMNS
   // Rightmost column is the finished anchor (leftmost when the board is rendered RTL).
   const finishedColumnId = columns[columns.length - 1].id
 
+  // Archived = finished before the board's cutoff. Hidden from the board,
+  // still listed on /list (searchable + restorable).
+  const archivedById = useMemo(() => {
+    const cutoff = board?.archiveCutoff ?? 0
+    const set = new Set<number>()
+    if (cutoff > 0) {
+      for (const c of cards) {
+        if (c.column === finishedColumnId && c.completedAt !== null && c.completedAt < cutoff) set.add(c.id)
+      }
+    }
+    return set
+  }, [board?.archiveCutoff, cards, finishedColumnId])
+
   const cardById = useMemo(() => new Map(cards.map(c => [c.id!, c])), [cards])
   const tagById = useMemo(() => new Map(tags.map(t => [t.id!, t])), [tags])
 
-  // Column grouping used by both the board render and the drag handlers.
-  const cardsByColumn = useMemo(() => groupByColumn(cards, columns), [cards, columns])
+  // Column grouping used by both the board render and the drag handlers —
+  // archived cards stay out of it entirely (board shows active work only).
+  const cardsByColumn = useMemo(
+    () => groupByColumn(cards.filter(c => !archivedById.has(c.id)), columns),
+    [cards, columns, archivedById],
+  )
 
   // Mid-drag composed layout (RAF bursts land between React renders, so preview
   // composition must read a ref, not possibly-stale state). Scoped to a drag: set
@@ -172,10 +192,11 @@ export function Board({ boardId }: { boardId: number }) {
       order: cardsByColumn[column]?.length ?? 0,
       upstreamIds: [],
       tagIds: [],
+      completedAt: null,
       createdAt: Date.now()
     }
     setCards(cs => [...cs, card])
-    const { id: _tmp, uid: _uid, ...row } = card
+    const { id: _tmp, uid: _uid, completedAt: _completedAt, ...row } = card
     void createCard(row).then(signed => {
       setCards(cs => cs.map(c => (c.id === card.id ? { ...c, id: signed.id!, uid: signed.uid } : c)))
     })
@@ -238,7 +259,7 @@ export function Board({ boardId }: { boardId: number }) {
     if (!commit) return
 
     setCards(Object.values(nextRecord).flat())
-    void moveCards(nextRecord[overContainer].map((card, order) => ({ key: card.id!, changes: { order, column: card.column } })))
+    void moveCards(nextRecord[overContainer].map((card, order) => ({ key: card.id!, changes: { order, column: card.column } })), finishedColumnId)
   }
 
   // A new drag always starts from the current layout — compose previews against that.
@@ -263,8 +284,8 @@ export function Board({ boardId }: { boardId: number }) {
         const nextColumns = columns.filter(c => c.id !== columnId)
         setBoard(p => (p ? { ...p, columns: nextColumns } : p))
         if (moved && migrateTo) {
-          setCards(cs => cs.map(c => (c.column === columnId ? { ...c, column: migrateTo! } : c)))
-          void migrateCardsColumn(boardId, columnId, migrateTo)
+          setCards(cs => cs.map(c => (c.column === columnId ? { ...c, column: migrateTo!, completedAt: migrateTo === finishedColumnId ? Date.now() : null } : c)))
+          void migrateCardsColumn(boardId, columnId, migrateTo, finishedColumnId)
         }
         void setBoardColumns(boardId, nextColumns)
         perform()
@@ -275,14 +296,32 @@ export function Board({ boardId }: { boardId: number }) {
   if (!board) return null
 
   return (
-    <div className="w-full space-y-4">
-      <div className="flex items-center gap-3">
+    <div className="grid grid-cols-1 grid-rows-[1.75rem_1fr] w-full gap-4 h-full">
+      <div className="flex items-center gap-3 h-7 px-4">
         <h1 className="text-lg font-semibold">{board.name}</h1>
-        <Button variant="outline" size="sm" className="ml-auto" onClick={() => setColumnsOpen(true)}>
+        {/* ponytail: basic nav buttons, user will style */}
+        <Link
+          to="/boards/$boardId"
+          params={{ boardId: String(boardId) }}
+          className="text-muted-foreground ml-auto rounded-md px-1.5 py-1 text-xs hover:underline"
+        >
+          Board
+        </Link>
+        <Link
+          to="/boards/$boardId/list"
+          params={{ boardId: String(boardId) }}
+          className="text-muted-foreground rounded-md px-1.5 py-1 text-xs hover:underline"
+        >
+          List
+        </Link>
+        <Button variant="outline" size="sm" onClick={() => setArchiveOpen(true)}>
+          Archive
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>
           Columns
         </Button>
       </div>
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto px-4">
         <Kanban
           value={cardsByColumn}
           onValueChange={next => {
@@ -297,7 +336,7 @@ export function Board({ boardId }: { boardId: number }) {
           onDragBegin={resetDragLayout}
           onDragCancel={restoreDragStart}
           isDropVetoed={(activeId, containerId) => containerId === finishedColumnId && blockedByUpstream(activeId)}
-          className="mx-auto w-full max-w-5xl"
+          className="mx-auto w-full max-w-5xl h-full"
         >
           <KanbanBoard
             className="grid auto-rows-fr gap-3"
@@ -376,6 +415,13 @@ export function Board({ boardId }: { boardId: number }) {
           void setBoardColumns(boardId, next)
         }}
         onRequestRemove={removeColumn}
+      />
+
+      <ArchiveDialog
+        open={archiveOpen}
+        onOpenChange={setArchiveOpen}
+        boardId={boardId}
+        archiveCutoff={board.archiveCutoff ?? 0}
       />
 
       <ConfirmDialog

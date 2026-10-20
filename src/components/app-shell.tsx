@@ -275,7 +275,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <SyncPanel />
           </SidebarFooter>
         </Sidebar>
-        <SidebarInset>
+        <SidebarInset className="min-h-dvh">
           {children}
         </SidebarInset>
 
