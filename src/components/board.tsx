@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/kanban'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { GripVerticalIcon, PlusIcon } from 'lucide-react'
+import { ArchiveIcon, GripVerticalIcon, PlusIcon } from 'lucide-react'
 import { BoardCard } from '@/components/board-card'
 import { UpstreamDialog } from '@/components/upstream-dialog'
 import { ColumnsDialog } from '@/components/columns-dialog'
@@ -298,12 +298,12 @@ export function Board({ boardId }: { boardId: number }) {
   return (
     <div className="w-full h-full gap-4">
       <BoardHeaderSlot>
-        <Button variant="outline" size="sm" onClick={() => setArchiveOpen(true)}>
-          Archive
+        <Button variant="outline" size="icon" className='size-7 rounded-md' onClick={() => setArchiveOpen(true)}>
+          <ArchiveIcon className='size-3 stroke-2'/>
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>
+        {/* <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>
           Columns
-        </Button>
+        </Button> */}
       </BoardHeaderSlot>
       <div className="overflow-x-auto h-full">
         <Kanban
