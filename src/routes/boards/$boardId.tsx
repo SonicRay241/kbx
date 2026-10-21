@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import {
   createFileRoute,
   Link,
@@ -8,7 +8,7 @@ import {
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { useLiveQuery } from "dexie-react-hooks";
-import { db } from "@/lib/db";
+import { db, type BoardRow } from "@/lib/db";
 
 export const Route = createFileRoute("/boards/$boardId")({
   component: BoardRoute,
@@ -38,9 +38,20 @@ function getAnchorPosition(suffix: string | undefined) {
 function BoardRoute() {
   const { boardId } = Route.useParams();
 
-  const board = useLiveQuery(() => db.boards.get(Number(boardId)));
+  const [board, setBoard] = useState<BoardRow | null>(null)
   const suffix = useLocation({ select: (l) => l.pathname.split("/").at(-1) });
   const [headerSlot, setHeaderSlot] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+      void (async () => {
+        const [p] = await Promise.all([
+          db.boards.get(Number(boardId)),
+          db.cards.where('boardId').equals(boardId).toArray(),
+          db.tags.where('boardId').equals(boardId).toArray()
+        ])
+        setBoard(p ?? null)
+      })()
+    }, [boardId])
 
   if (!board) return "Loading...";
 
