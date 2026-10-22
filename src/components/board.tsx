@@ -20,6 +20,7 @@ import { BoardCard } from '@/components/board-card'
 import { UpstreamDialog } from '@/components/upstream-dialog'
 import { ColumnsDialog } from '@/components/columns-dialog'
 import { ArchiveDialog } from '@/components/archive-dialog'
+import { Switch } from '@/components/ui/switch'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { BoardHeaderSlot } from '@/routes/boards/$boardId'
 import { ACCENTS } from './constants/colors'
@@ -131,6 +132,7 @@ export function Board({ boardId }: { boardId: number }) {
   const [dialogCardId, setDialogCardId] = useState<number | null>(null)
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
+  const [hideBlocked, setHideBlocked] = useState(false)
   const [confirm, setConfirm] = useState<{ title: string; description: string; action: () => void } | null>(null)
 
   const columns = board?.columns?.length ? board.columns : DEFAULT_COLUMNS
@@ -144,11 +146,24 @@ export function Board({ boardId }: { boardId: number }) {
   const cardById = useMemo(() => new Map(cards.map(c => [c.id!, c])), [cards])
   const tagById = useMemo(() => new Map(tags.map(t => [t.id!, t])), [tags])
 
+  // Blocked = at least one upstream is not finished yet. A card whose upstream
+  // row is gone counts as unblocked (same fallback as the drop veto).
+  const blockedIds = useMemo(() => {
+    const set = new Set<number>()
+    for (const card of cards) {
+      if (archivedById.has(card.id)) continue
+      if (card.upstreamIds.some(uId => (cardById.get(uId)?.column ?? finishedColumnId) !== finishedColumnId)) {
+        set.add(card.id)
+      }
+    }
+    return set
+  }, [cards, archivedById, cardById, finishedColumnId])
+
   // Column grouping used by both the board render and the drag handlers —
   // archived cards stay out of it entirely (board shows active work only).
   const cardsByColumn = useMemo(
-    () => groupByColumn(cards.filter(c => !archivedById.has(c.id)), columns),
-    [cards, columns, archivedById],
+    () => groupByColumn(cards.filter(c => !archivedById.has(c.id) && !(hideBlocked && blockedIds.has(c.id))), columns),
+    [cards, columns, archivedById, hideBlocked, blockedIds],
   )
 
   // Mid-drag composed layout (RAF bursts land between React renders, so preview
@@ -159,28 +174,29 @@ export function Board({ boardId }: { boardId: number }) {
   // moves animate back and previews never leak into the settled board.
   const dragStartSnapshot = useRef<Record<string, CardData[]> | null>(null)
 
-  const blockedByUpstream = (id: number) => {
-    const card = cardById.get(id)
-    return !!card && card.upstreamIds.some(uId => (cardById.get(uId)?.column ?? finishedColumnId) !== finishedColumnId)
-  }
+  const blockedByUpstream = (id: number) => blockedIds.has(id)
 
   function handleAddCard(column: string) {
     // negative ids never collide with Dexie's auto-increment — the temp id only
     // needs to survive until the write resolves and the true row replaces it.
     const tempId = -Date.now()
+    const siblings = cardsByColumn[column] ?? []
+    // New cards land on top: a lower order than everything in the column, and the
+    // card is prepended to the state array (grouping preserves that order).
+    const topOrder = siblings.length ? Math.min(...siblings.map(c => c.order)) - 1 : 0
     const card: CardData = {
       id: tempId,
       uid: '', // minted by createCard; swap lands before any drag can use it
       boardId,
       column,
       title: 'New card',
-      order: cardsByColumn[column]?.length ?? 0,
+      order: topOrder,
       upstreamIds: [],
       tagIds: [],
       completedAt: null,
       createdAt: Date.now()
     }
-    setCards(cs => [...cs, card])
+    setCards(cs => [card, ...cs])
     const { id: _tmp, uid: _uid, completedAt: _completedAt, ...row } = card
     void createCard(row).then(signed => {
       setCards(cs => cs.map(c => (c.id === card.id ? { ...c, id: signed.id!, uid: signed.uid } : c)))
@@ -283,6 +299,15 @@ export function Board({ boardId }: { boardId: number }) {
   return (
     <div className="w-full h-full gap-4">
       <BoardHeaderSlot>
+        <label className="text-muted-foreground flex cursor-pointer items-center gap-2 text-xs select-none">
+          <Switch
+            size="sm"
+            checked={hideBlocked}
+            onCheckedChange={setHideBlocked}
+            aria-label="Hide blocked tasks"
+          />
+          Hide blocked
+        </label>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="outline" size="icon" className='size-7 rounded-md' onClick={() => setArchiveOpen(true)}>
