@@ -82,6 +82,7 @@ export async function createCard(input: Omit<Card, 'id' | 'uid' | 'completedAt'>
     createdAt: input.createdAt || now,
     updatedAt: now,
     fieldTimestamps: {
+      boardId: now,
       column: now,
       title: now,
       order: now,
@@ -190,7 +191,7 @@ export async function createTag(input: { boardId: number; name: string; color: s
     uid: uuid(),
     createdAt: now,
     updatedAt: now,
-    fieldTimestamps: { name: now, color: now },
+    fieldTimestamps: { boardId: now, name: now, color: now },
   }
   tag.id = await db.tags.add(tag)
   scheduleSync()

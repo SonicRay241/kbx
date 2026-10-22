@@ -128,8 +128,10 @@ type UnitKind = 'board' | 'card' | 'tag'
 
 const MERGEABLE_FIELDS: Record<UnitKind, readonly string[]> = {
   board: ['name', 'columns', 'archiveCutoff'],
-  card: ['column', 'title', 'description', 'order', 'upstreamIds', 'tagIds', 'completedAt'],
-  tag: ['name', 'color'],
+  // boardId is mergeable: it travels as the board uid so a pulled card/tag can
+  // find its local board row. Without it every pulled child is orphaned.
+  card: ['boardId', 'column', 'title', 'description', 'order', 'upstreamIds', 'tagIds', 'completedAt'],
+  tag: ['boardId', 'name', 'color'],
 }
 
 interface LocalUnit {
@@ -278,9 +280,10 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
 
   // --- Pull phase: remote entries new or changed relative to local. Boards
   // first: pulled cards/tags must find their board row (uid FK translation).
-  for (const [id, entry] of Object.entries(index.entries).sort(([a], [b]) =>
-    (a.startsWith('board:') ? 0 : 1) - (b.startsWith('board:') ? 0 : 1),
-  )) {
+  const kindRank = (unitId: string) => (unitId.startsWith('board:') ? 0 : unitId.startsWith('tag:') ? 1 : 2)
+  /** Refs dropped during the pull because the target row wasn't inserted yet. */
+  const pendingRefs = new Map<number, { upstreamIds?: unknown; tagIds?: unknown }>()
+  for (const [id, entry] of Object.entries(index.entries).sort(([a], [b]) => kindRank(a) - kindRank(b))) {
     const local = localById.get(id)
     const [kind, uid] = splitUnitId(id)
 
@@ -328,7 +331,13 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
         throw error
       }
       try {
-        await putUnitRow(kind, uid, json, entry.updatedAt)
+        const inserted = await putUnitRow(kind, uid, json, entry.updatedAt)
+        if (kind === 'card') {
+          pendingRefs.set(inserted.id, {
+            upstreamIds: inserted.fields.upstreamIds,
+            tagIds: inserted.fields.tagIds,
+          })
+        }
         await db.entitySyncMeta.put({ id, lastPushedHash: entry.hash, fileId: entry.fileId })
         result.pulled += 1
       } catch (error) {
@@ -364,6 +373,12 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
     const merge = mergeUnit(local, kind, remote, entry.updatedAt)
     if (merge.changed) {
       await updateUnitRow(kind, local.rowId, merge)
+      if (kind === 'card') {
+        pendingRefs.set(local.rowId, {
+          upstreamIds: 'upstreamIds' in merge.remoteWins ? remote.fields.upstreamIds : undefined,
+          tagIds: 'tagIds' in merge.remoteWins ? remote.fields.tagIds : undefined,
+        })
+      }
       const mergedRow = await getUnitRow(kind, local.rowId)
       const mergedHash = mergedRow
         ? await sha256Hex(unitPayload(kind, mergedRow, await loadRefMaps()))
@@ -400,6 +415,28 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
     }
     await db.deletedEntities.delete(pending.id)
     result.deleted += 1
+  }
+
+  // Rows inserted earlier in this pass may reference tags/cards that only
+  // landed later (index order is arbitrary). Re-resolve the cloud refs now
+  // that every row exists; otherwise the partial local row would push back
+  // and clobber the cloud links.
+  if (pendingRefs.size > 0) {
+    const healRefs = await loadRefMaps()
+    for (const [rowId, raw] of pendingRefs) {
+      const row = await db.cards.get(rowId)
+      if (!row) continue
+      const patch: Partial<Card> = {}
+      if (raw.upstreamIds !== undefined) {
+        const healed = [...new Set([...row.upstreamIds, ...asRefArray(raw.upstreamIds, healRefs.cardIdByUid)])]
+        if (healed.length !== row.upstreamIds.length) patch.upstreamIds = healed
+      }
+      if (raw.tagIds !== undefined) {
+        const healed = [...new Set([...row.tagIds, ...asRefArray(raw.tagIds, healRefs.tagIdByUid)])]
+        if (healed.length !== row.tagIds.length) patch.tagIds = healed
+      }
+      if (Object.keys(patch).length > 0) await db.cards.update(rowId, patch)
+    }
   }
 
   // --- Push phase: units flagged cloudSynced.
@@ -512,9 +549,12 @@ function mergeUnit(local: LocalUnit, kind: UnitKind, remote: CloudUnitDoc, entry
     const lt = localTs[field] ?? localRowTs
     const rt = remote.ts[field] ?? remoteRowTs
     stamps[field] = Math.max(lt, rt)
-    if (rt >= lt) {
+    const localValue = (local.row as unknown as Record<string, unknown>)[field]
+    // A local row that lost a field (older cloud docs omitted it) always
+    // adopts the remote value, regardless of stamps.
+    if (rt >= lt || (localValue === undefined && remote.fields[field] !== undefined)) {
       remoteWins[field] = remote.fields[field]
-      if (JSON.stringify(remote.fields[field]) !== JSON.stringify((local.row as unknown as Record<string, unknown>)[field])) {
+      if (JSON.stringify(remote.fields[field]) !== JSON.stringify(localValue)) {
         changed = true
       }
     }
@@ -533,6 +573,9 @@ async function updateUnitRow(
   const refs = await loadRefMaps()
   const patch: Record<string, unknown> = {}
   for (const [field, rawValue] of Object.entries(merge.remoteWins)) {
+    // Docs written by older builds omit fields entirely; undefined must not
+    // blank the local value on a merge.
+    if (rawValue === undefined) continue
     if (field === 'boardId') patch[field] = refIn(refs.boardIdByUid, rawValue)
     else if (field === 'upstreamIds') patch[field] = asRefArray(rawValue, refs.cardIdByUid)
     else if (field === 'tagIds') patch[field] = asRefArray(rawValue, refs.tagIdByUid)
@@ -551,7 +594,12 @@ async function getUnitRow(kind: UnitKind, rowId: number): Promise<BoardRow | Car
 }
 
 /** Insert a locally-missing row from its cloud doc (Dexie mints the local id). */
-async function putUnitRow(kind: UnitKind, uid: string, json: string, entryUpdatedAt: number): Promise<void> {
+async function putUnitRow(
+  kind: UnitKind,
+  uid: string,
+  json: string,
+  entryUpdatedAt: number,
+): Promise<{ id: number; fields: Record<string, unknown> }> {
   const doc = parseCloudDoc(json)
   const refs = await loadRefMaps()
   const fields = doc.fields
@@ -569,8 +617,7 @@ async function putUnitRow(kind: UnitKind, uid: string, json: string, entryUpdate
       updatedAt: doc.rowTs || entryUpdatedAt,
       fieldTimestamps: doc.ts,
     }
-    await db.boards.add(row)
-    return
+    return { id: (await db.boards.add(row as BoardRow))!, fields }
   }
   if (kind === 'card') {
     const row: Omit<Card, 'id'> = {
@@ -586,8 +633,7 @@ async function putUnitRow(kind: UnitKind, uid: string, json: string, entryUpdate
       updatedAt: doc.rowTs || entryUpdatedAt,
       fieldTimestamps: doc.ts,
     }
-    await db.cards.add(row)
-    return
+    return { id: (await db.cards.add(row as Card))!, fields }
   }
   const row: Omit<Tag, 'id'> = {
     uid,
@@ -598,7 +644,7 @@ async function putUnitRow(kind: UnitKind, uid: string, json: string, entryUpdate
     updatedAt: doc.rowTs || entryUpdatedAt,
     fieldTimestamps: doc.ts,
   }
-  await db.tags.add(row)
+  return { id: (await db.tags.add(row as Tag))!, fields }
 }
 
 /** Cloud doc for a unit's row: mergeable fields with uid-translated FKs. */
