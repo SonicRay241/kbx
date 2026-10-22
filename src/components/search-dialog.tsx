@@ -137,6 +137,12 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cards, query, boardById]);
 
+  // Search-bar state change → select the first result. Hovering moves the
+  // selection; leaving the row keeps it, so the preview stays put.
+  useEffect(() => {
+    setPreviewId(results[0]?.card.id ?? null);
+  }, [query, results]);
+
   const graph = useMemo(() => {
     const card = previewId === null ? null : cardById.get(previewId);
     if (!card) return null;
@@ -230,7 +236,10 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                       onMouseEnter={() => setPreviewId(card.id)}
                       onFocus={() => setPreviewId(card.id)}
                       onClick={() => jump(card)}
-                      className="hover:bg-accent focus-visible:bg-accent flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left outline-hidden"
+                      aria-current={previewId === card.id}
+                      className={`hover:bg-accent focus-visible:bg-accent flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left outline-hidden ${
+                        previewId === card.id ? "bg-accent" : ""
+                      }`}
                     >
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-sm font-medium">
