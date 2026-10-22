@@ -12,11 +12,8 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { ChevronsUpDownIcon, ListChecksIcon, ListXIcon, RotateCcwIcon, SearchIcon } from "lucide-react";
 import { archivedCardIds, db, type Card, type Tag } from "@/lib/db";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { TaskSelector } from "@/components/task-selector";
 import { BoardHeaderSlot } from "@/routes/boards/$boardId";
 import { TaskCard } from "@/components/board-card";
 import { softAccentBadge } from "@/components/constants/colors";
@@ -215,7 +212,7 @@ function Lineage({ boardId }: { boardId: number }) {
         <TaskSelector
           cards={allCards}
           selected={explicit}
-          shownCount={selected.size}
+          triggerLabel={`${selected.size} of ${allCards.length} tasks`}
           onToggle={toggle}
           onClear={() => setPicked(new Set())}
           onSelectAll={() => setPicked(new Set(allCards.map((c) => c.id)))}
@@ -236,89 +233,5 @@ function Lineage({ boardId }: { boardId: number }) {
         </ReactFlow>
       </div>
     </div>
-  );
-}
-
-function TaskSelector({
-  cards,
-  selected,
-  shownCount,
-  onToggle,
-  onClear,
-  onSelectAll,
-  onReset,
-  columnTitle,
-}: {
-  cards: Card[];
-  /** Explicit picks — drives the row dots. `shownCount` includes auto-added upstreams. */
-  selected: Set<number>;
-  shownCount: number;
-  onToggle: (id: number) => void;
-  onClear: () => void;
-  onSelectAll: () => void;
-  onReset: () => void;
-  columnTitle: (id: string) => string;
-}) {
-  const [query, setQuery] = useState("");
-  const q = query.trim().toLowerCase();
-  const visible = q ? cards.filter((c) => c.title.toLowerCase().includes(q)) : cards;
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className="w-56 justify-between">
-          <span>
-            {shownCount} of {cards.length} tasks
-          </span>
-          <ChevronsUpDownIcon className="text-muted-foreground size-4" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-80 p-0">
-        <div className="p-2">
-          <div className="relative">
-            <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search…"
-              className="bg-muted h-8 border-0 pl-8"
-              aria-label="Search tasks"
-            />
-          </div>
-        </div>
-        <div className="max-h-72 overflow-y-auto border-t p-1">
-          {visible.map((card) => (
-            <button
-              key={card.id}
-              type="button"
-              onClick={() => onToggle(card.id)}
-              aria-pressed={selected.has(card.id)}
-              className="hover:bg-accent flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm"
-            >
-              <span className="truncate font-medium">{card.title}</span>
-              <span className="text-muted-foreground truncate text-xs">{columnTitle(card.column)}</span>
-              <span
-                className={`ml-auto size-2 shrink-0 rounded-full ${selected.has(card.id) ? "bg-primary" : "border"}`}
-              />
-            </button>
-          ))}
-          {visible.length === 0 && <p className="text-muted-foreground px-2 py-1.5 text-sm">No tasks match.</p>}
-        </div>
-        <div className="grid grid-cols-2 gap-1 border-t p-2">
-          <Button variant="secondary" size="sm" className="justify-between" onClick={onClear}>
-            Clear
-            <ListXIcon />
-          </Button>
-          <Button variant="secondary" size="sm" className="justify-between" onClick={onSelectAll}>
-            Select all
-            <ListChecksIcon />
-          </Button>
-          <Button variant="secondary" size="sm" className="col-span-2 justify-between" onClick={onReset}>
-            Reset (to default)
-            <RotateCcwIcon />
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
   );
 }

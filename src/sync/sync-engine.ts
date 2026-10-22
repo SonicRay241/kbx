@@ -128,7 +128,7 @@ type UnitKind = 'board' | 'card' | 'tag'
 
 const MERGEABLE_FIELDS: Record<UnitKind, readonly string[]> = {
   board: ['name', 'columns', 'archiveCutoff'],
-  card: ['column', 'title', 'order', 'upstreamIds', 'tagIds', 'completedAt'],
+  card: ['column', 'title', 'description', 'order', 'upstreamIds', 'tagIds', 'completedAt'],
   tag: ['name', 'color'],
 }
 

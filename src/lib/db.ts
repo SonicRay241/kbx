@@ -31,6 +31,7 @@ export type Card = {
   boardId: number
   column: string
   title: string
+  description?: string
   order: number
   upstreamIds: number[]
   tagIds: number[]

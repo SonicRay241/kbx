@@ -26,5 +26,5 @@ export const OUTLINE_ACCENTS = [
 ];
 /** Soft fill + matching outline, keyed by column index (list-page state badge). */
 export function softAccentBadge(index: number) {
-  return `text-primary-foreground font-normal ${SOFT_ACCENTS[index % SOFT_ACCENTS.length]} ${OUTLINE_ACCENTS[index % OUTLINE_ACCENTS.length]}`;
+  return `font-normal ${SOFT_ACCENTS[index % SOFT_ACCENTS.length]} ${OUTLINE_ACCENTS[index % OUTLINE_ACCENTS.length]}`;
 }

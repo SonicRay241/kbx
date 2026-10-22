@@ -1,12 +1,16 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { cn } from '@/lib/utils'
-import { CircleCheckIcon, GitBranchIcon, XIcon } from 'lucide-react'
+import { Progress } from '@/components/ui/progress'
+import { Textarea } from '@/components/ui/textarea'
+import { AlignLeftIcon, GitBranchIcon, XIcon } from 'lucide-react'
 import { useState } from 'react'
 import type { Card as CardData, Tag } from '@/lib/db'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { TagsCombobox } from '@/components/tags-combobox'
+import { TaskSelector } from '@/components/task-selector'
+import { softAccentBadge } from '@/components/constants/colors'
+import { cn } from '@/lib/utils'
 
 interface UpstreamDialogProps {
   cardId: number | null
@@ -28,7 +32,6 @@ interface UpstreamDialogProps {
 }
 
 export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, usedTagIds, onUnusedTagsDeleted, open, onOpenChange, onUpdateCard, onDeleteCard }: UpstreamDialogProps) {
-  const [selected, setSelected] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const card = cards.find(c => c.id === cardId)
@@ -36,6 +39,13 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
   if (!card || !open) return null
 
   const finishedColumnId = columns[columns.length - 1].id
+  const columnTitle = (id: string) => columns.find(c => c.id === id)?.title ?? id
+  const badgeFor = (id: string) => softAccentBadge(Math.max(columns.findIndex(c => c.id === id), 0))
+
+  const upstreamIds = new Set(card.upstreamIds)
+  const upstreams = card.upstreamIds.map(id => cards.find(c => c.id === id)).filter(c => c) as CardData[]
+  const done = upstreams.filter(c => c.column === finishedColumnId).length
+  const pct = upstreams.length ? Math.round((done / upstreams.length) * 100) : 0
 
   // Would linking candidate → card create a cycle? (candidate can already reach card)
   const createsCycle = (candidateId: number) => {
@@ -53,18 +63,18 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
     return reachable.has(card.id!)
   }
 
-  const upstreams = card.upstreamIds.map(id => cards.find(c => c.id === id)).filter(c => c) as CardData[]
-  const done = upstreams.filter(c => c.column === finishedColumnId).length
-  const pct = upstreams.length ? Math.round((done / upstreams.length) * 100) : 0
-  const candidates = cards
-    .filter(c => c.id !== card.id && !card.upstreamIds.includes(c.id!) && !createsCycle(c.id!))
-    .sort((a, b) => a.title.localeCompare(b.title))
+  // Self and anything that would close a loop. Already-linked cards stay enabled so they can be unticked.
+  const blockedIds = new Set(
+    cards.filter(c => c.id === card.id || (!upstreamIds.has(c.id!) && createsCycle(c.id!))).map(c => c.id!)
+  )
+  const addable = cards.filter(c => !blockedIds.has(c.id!) && !upstreamIds.has(c.id!))
 
-  const addUpstream = () => {
-    const id = Number(selected)
-    if (!id) return
-    onUpdateCard(card.id!, { upstreamIds: [...card.upstreamIds, id] })
-    setSelected('')
+  const toggleUpstream = (id: number) => {
+    onUpdateCard(card.id!, {
+      upstreamIds: upstreamIds.has(id)
+        ? card.upstreamIds.filter(uId => uId !== id)
+        : [...card.upstreamIds, id],
+    })
   }
 
   const deleteCard = () => {
@@ -80,22 +90,23 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex h-dvh max-w-none flex-col rounded-none border-none bg-background p-6 sm:max-w-none">
-        <DialogHeader>
+      <DialogContent className="flex max-h-5/6 min-h-5/6 min-w-5/6 max-w-3xl flex-col gap-0 p-4 sm:max-w-3xl">
+        <DialogHeader className="gap-2 border-b pb-4">
           <Input
             value={card.title}
             onChange={e => onUpdateCard(card.id!, { title: e.target.value })}
-            className="border-none bg-transparent px-0 text-base md:text-lg font-semibold shadow-none focus-visible:ring-0"
+            className="border-none bg-transparent px-0 text-base font-semibold shadow-none focus-visible:ring-0 md:text-lg"
             aria-label="Card title"
           />
-          <DialogTitle className="sr-only">{card.title} upstream tasks</DialogTitle>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <GitBranchIcon className="size-4" />
-              <span>
-                {done} of {upstreams.length} upstream tasks finished ({pct}%)
-              </span>
-            </div>
+          <DialogTitle className="sr-only">{card.title}</DialogTitle>
+          <div className="text-muted-foreground text-xs">
+            in list{' '}
+            <span className="text-foreground font-medium underline decoration-border underline-offset-2">
+              {columnTitle(card.column)}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Labels</span>
             <TagsCombobox
               boardId={card.boardId}
               tags={tags}
@@ -108,62 +119,71 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
           </div>
         </DialogHeader>
 
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
-          {upstreams.length === 0 ? (
-            <p className="text-muted-foreground py-8 text-center text-sm">No upstream tasks.</p>
-          ) : (
-            upstreams.map(u => (
-              <div key={u.id} className="flex items-center gap-3 rounded-lg border p-3">
-                {u.column === finishedColumnId ? (
-                  <CircleCheckIcon className="size-4 shrink-0 text-green-600 dark:text-green-400" />
-                ) : (
-                  <GitBranchIcon className="text-muted-foreground size-4 shrink-0" />
-                )}
-                <p className="min-w-0 flex-1 truncate text-sm font-medium">{u.title}</p>
-                <span
-                  className={cn(
-                    'text-xs whitespace-nowrap',
-                    u.column === finishedColumnId ? 'text-green-600 dark:text-green-400' : 'text-muted-foreground'
-                  )}
-                >
-                  {columns.find(c => c.id === u.column)?.title ?? u.column}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Remove upstream ${u.title}`}
-                  onClick={() => onUpdateCard(card.id!, { upstreamIds: card.upstreamIds.filter(uId => uId !== u.id) })}
-                >
-                  <XIcon />
-                </Button>
+        <div className="min-h-0 flex-1 space-y-6 overflow-y-auto py-4">
+          <section className="space-y-2">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <AlignLeftIcon className="text-muted-foreground size-4" />
+              Description
+            </h3>
+            <Textarea
+              value={card.description ?? ''}
+              onChange={e => onUpdateCard(card.id!, { description: e.target.value })}
+              placeholder="Add a more detailed description…"
+              aria-label="Description"
+              className="bg-muted max-h-48 min-h-24 resize-none overflow-y-auto border-0"
+            />
+          </section>
+
+          <section className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="flex items-center gap-2 text-sm font-semibold">
+                <GitBranchIcon className="text-muted-foreground size-4" />
+                Upstream
+              </h3>
+              <TaskSelector
+                cards={cards.filter(c => c.id !== card.id)}
+                selected={upstreamIds}
+                disabledIds={blockedIds}
+                onToggle={toggleUpstream}
+                onSelectAll={() => onUpdateCard(card.id!, { upstreamIds: [...card.upstreamIds, ...addable.map(c => c.id!)] })}
+                columnTitle={columnTitle}
+                triggerLabel={upstreams.length ? `${upstreams.length} selected` : 'Add upstream'}
+                triggerClassName="w-40 justify-between"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground w-8 shrink-0 text-xs tabular-nums">{pct}%</span>
+              <Progress value={pct} className="h-1.5" />
+            </div>
+
+            {upstreams.length === 0 ? (
+              <p className="text-muted-foreground py-6 text-center text-sm">No upstream tasks.</p>
+            ) : (
+              <div className="space-y-1">
+                {upstreams.map(u => (
+                  <div key={u.id} className="flex items-center gap-2 rounded-lg border px-3 py-2">
+                    <p className="min-w-0 flex-1 truncate text-sm font-medium">{u.title}</p>
+                    <span className={cn('flex h-5 items-center rounded px-2 text-xs', badgeFor(u.column))}>
+                      {columnTitle(u.column)}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Remove upstream ${u.title}`}
+                      onClick={() => toggleUpstream(u.id!)}
+                    >
+                      <XIcon />
+                    </Button>
+                  </div>
+                ))}
               </div>
-            ))
-          )}
+            )}
+          </section>
         </div>
 
-        <div className="flex items-center gap-2 border-t pt-4">
-          <select
-            value={selected}
-            onChange={(e) => setSelected(e.target.value)}
-            className="h-9 flex-1 rounded-md border bg-background px-3 text-sm outline-none"
-            aria-label="Select a card to add as upstream"
-          >
-            <option value="" disabled>
-              Select a card…
-            </option>
-            {candidates.map(c => (
-              <option key={c.id} value={c.id}>
-                {c.title}
-              </option>
-            ))}
-          </select>
-          <Button onClick={addUpstream} disabled={!selected}>
-            Add upstream
-          </Button>
-          <Button
-            variant="destructive"
-            onClick={() => setConfirmDelete(true)}
-          >
+        <div className="flex justify-end border-t pt-4">
+          <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
             Delete card
           </Button>
         </div>

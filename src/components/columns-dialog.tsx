@@ -32,12 +32,6 @@ export function ColumnsDialog({ open, onOpenChange, columns, onChangeColumns, on
     })
   }
 
-  const setAsFinished = (id: string) => {
-    const target = columns.find(c => c.id === id)
-    if (!target) return
-    onChangeColumns([...columns.filter(c => c.id !== id), target])
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
