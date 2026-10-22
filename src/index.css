@@ -30,6 +30,8 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
   --radius: 0.625rem;
+
+  --breakpoint-xs: 480px;
 }
 
 @theme inline {

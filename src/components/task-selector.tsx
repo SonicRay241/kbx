@@ -42,7 +42,7 @@ export function TaskSelector({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="outline" size="sm" className={triggerClassName ?? 'w-56 justify-between'}>
+        <Button variant="outline" size="sm" className={triggerClassName ?? 'min-w-56 justify-between'}>
           <span>{triggerLabel}</span>
           <ChevronsUpDownIcon className="text-muted-foreground size-4" />
         </Button>
