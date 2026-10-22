@@ -130,7 +130,7 @@ const MERGEABLE_FIELDS: Record<UnitKind, readonly string[]> = {
   workspace: ['name', 'order'],
   // workspaceId travels as the workspace uid; sidebarOrder keeps the sidebar
   // arrangement identical across devices.
-  board: ['name', 'columns', 'archiveCutoff', 'workspaceId', 'sidebarOrder'],
+  board: ['name', 'columns', 'archiveCutoff', 'archiveSpan', 'workspaceId', 'sidebarOrder'],
   // boardId is mergeable: it travels as the board uid so a pulled card/tag can
   // find its local board row. Without it every pulled child is orphaned.
   card: ['boardId', 'column', 'title', 'description', 'order', 'upstreamIds', 'tagIds', 'completedAt'],
@@ -642,6 +642,7 @@ async function putUnitRow(
       sidebarOrder: Number(fields.sidebarOrder ?? 0),
       columns: Array.isArray(fields.columns) ? (fields.columns as BoardRow['columns']) : [],
       archiveCutoff: Number(fields.archiveCutoff ?? 0) || 0,
+      archiveSpan: fields.archiveSpan == null ? null : Number(fields.archiveSpan),
       createdAt: fallbackCreated,
       updatedAt: doc.rowTs || entryUpdatedAt,
       fieldTimestamps: doc.ts,

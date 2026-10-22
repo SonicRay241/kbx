@@ -33,9 +33,10 @@ export async function createBoard(name: string, columns: BoardRow['columns']): P
     sidebarOrder: (last?.sidebarOrder ?? -1) + 1,
     columns: columns.map((c) => ({ ...c })),
     archiveCutoff: 0,
+    archiveSpan: null,
     createdAt: now,
     updatedAt: now,
-    fieldTimestamps: { name: now, columns: now, archiveCutoff: now, sidebarOrder: now, workspaceId: now },
+    fieldTimestamps: { name: now, columns: now, archiveCutoff: now, archiveSpan: now, sidebarOrder: now, workspaceId: now },
   }
   board.id = await db.boards.add(board)
   scheduleSync()
@@ -179,9 +180,10 @@ export async function migrateCardsColumn(boardId: number, from: string, to: stri
   scheduleSync()
 }
 
-/** Archive: set the board's done-card cutoff (0 = keep everything). */
-export async function setBoardArchiveCutoff(boardId: number, cutoff: number): Promise<void> {
-  await db.boards.update(boardId, stamped({ archiveCutoff: cutoff }) as unknown as Partial<BoardRow>)
+/** Archive checkpoint: hide done cards completed before `cutoff` (0 = off).
+ * `span` is the window the user picked, kept for the dialog's initial value. */
+export async function setBoardArchive(boardId: number, cutoff: number, span: number | null): Promise<void> {
+  await db.boards.update(boardId, stamped({ archiveCutoff: cutoff, archiveSpan: span }) as unknown as Partial<BoardRow>)
   scheduleSync()
 }
 

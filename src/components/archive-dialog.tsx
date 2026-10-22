@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ChevronDownIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { setBoardArchiveCutoff } from '@/lib/mutations'
+import { setBoardArchive } from '@/lib/mutations'
 
 const MS_PER = {
   minute: 60_000,
@@ -15,51 +16,52 @@ const MS_PER = {
 type Unit = keyof typeof MS_PER
 
 const PRESETS: { label: string; value: number; unit: Unit }[] = [
+  { label: 'Now', value: 0, unit: 'minute' },
   { label: '1 day', value: 1, unit: 'day' },
   { label: '1 week', value: 1, unit: 'week' },
   { label: '2 weeks', value: 2, unit: 'week' },
   { label: '1 month', value: 1, unit: 'month' },
 ]
 
-/** Decompose a cutoff ms value back to (n, unit); falls back to the smallest
- * unit that represents it exactly, else days with decimals hidden. */
-function decompose(cutoff: number): { n: number; unit: Unit } {
+/** The stored value is a window (`n × unit`), so it decomposes exactly. */
+function decompose(after: number): { n: number; unit: Unit } {
+  if (after <= 0) return { n: 0, unit: 'minute' }
   for (const unit of ['minute', 'hour', 'day', 'week', 'month'] as Unit[]) {
-    const ms = MS_PER[unit]
-    if (cutoff % ms === 0) return { n: cutoff / ms, unit }
+    if (after % MS_PER[unit] === 0) return { n: after / MS_PER[unit], unit }
   }
-  return { n: 1, unit: 'day' }
+  return { n: Math.round(after / MS_PER.minute), unit: 'minute' }
 }
 
 interface ArchiveDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   boardId: number
-  /** Current cutoff in ms since epoch (0 = none). */
-  archiveCutoff: number
+  /** Window the checkpoint was derived from; null when off. */
+  archiveSpan: number | null
+  /** Applied locally so the board re-renders without a reload. */
+  onSaved: (cutoff: number, span: number | null) => void
 }
 
 /**
- * Lets the user pick how old a done task must be to archive: a preset, or a
- * custom amount via number input + unit dropdown. Saving sets the board's
- * cutoff — done cards completed before it are hidden from the board and
- * listed on /list.
+ * Archive checkpoint: saving freezes "now − span" and hides every done card
+ * completed before it. The checkpoint only moves when saved again — pick the
+ * span again to advance it ("Now" archives everything that is already done).
  */
-export function ArchiveDialog({ open, onOpenChange, boardId, archiveCutoff }: ArchiveDialogProps) {
-  const initial = archiveCutoff > 0 ? decompose(archiveCutoff) : { n: 1, unit: 'day' as Unit }
+export function ArchiveDialog({ open, onOpenChange, boardId, archiveSpan, onSaved }: ArchiveDialogProps) {
+  const initial = archiveSpan == null ? { n: 1, unit: 'day' as Unit } : decompose(archiveSpan)
   const [n, setN] = useState(initial.n)
   const [unit, setUnit] = useState<Unit>(initial.unit)
   const [activePreset, setActivePreset] = useState<string | null>(
-    archiveCutoff > 0 ? PRESETS.find(p => p.value === initial.n && p.unit === initial.unit)?.label ?? null : null,
+    archiveSpan == null ? null : PRESETS.find(p => p.value === initial.n && p.unit === initial.unit)?.label ?? null,
   )
 
   useEffect(() => {
     if (!open) return
-    const d = archiveCutoff > 0 ? decompose(archiveCutoff) : { n: 1, unit: 'day' as Unit }
+    const d = archiveSpan == null ? { n: 1, unit: 'day' as Unit } : decompose(archiveSpan)
     setN(d.n)
     setUnit(d.unit)
-    setActivePreset(archiveCutoff > 0 ? PRESETS.find(p => p.value === d.n && p.unit === d.unit)?.label ?? null : null)
-  }, [open, archiveCutoff])
+    setActivePreset(archiveSpan == null ? null : PRESETS.find(p => p.value === d.n && p.unit === d.unit)?.label ?? null)
+  }, [open, archiveSpan])
 
   const pickPreset = (label: string, value: number, unit: Unit) => {
     setActivePreset(label)
@@ -69,14 +71,19 @@ export function ArchiveDialog({ open, onOpenChange, boardId, archiveCutoff }: Ar
 
   const save = () => {
     const valid = Math.max(0, Math.floor(n) || 0)
+    const span = valid * MS_PER[unit]
+    const cutoff = Date.now() - span
     onOpenChange(false)
-    if (valid === 0) {
-      // Reset: keep every done card on the board.
-      void setBoardArchiveCutoff(boardId, 0)
-      return
-    }
-    // Cutoff is anchored to NOW: cards completed before (now − span) archive.
-    void setBoardArchiveCutoff(boardId, Date.now() - valid * MS_PER[unit])
+    void setBoardArchive(boardId, cutoff, span)
+    onSaved(cutoff, span)
+  }
+
+  /** Archive everything that is already done: a zero-length window. */
+  const archiveAll = () => {
+    const cutoff = Date.now()
+    onOpenChange(false)
+    void setBoardArchive(boardId, cutoff, 0)
+    onSaved(cutoff, 0)
   }
 
   return (
@@ -85,8 +92,8 @@ export function ArchiveDialog({ open, onOpenChange, boardId, archiveCutoff }: Ar
         <DialogHeader>
           <DialogTitle>Archive done tasks</DialogTitle>
           <DialogDescription>
-            Done tasks completed before the cutoff are hidden from the board and
-            stay searchable on the list page.
+            Done tasks completed more than this long ago are hidden from the board
+            and stay searchable on the list page.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-wrap gap-1.5">
@@ -114,21 +121,27 @@ export function ArchiveDialog({ open, onOpenChange, boardId, archiveCutoff }: Ar
             className="w-24"
             aria-label="Archive after amount"
           />
-          <select
-            value={unit}
-            onChange={e => {
-              setUnit(e.target.value as Unit)
-              setActivePreset(null)
-            }}
-            className="h-9 rounded-md border border-input bg-transparent px-2 text-sm shadow-xs outline-none"
-            aria-label="Unit"
-          >
-            {(Object.keys(MS_PER) as Unit[]).map(u => (
-              <option key={u} value={u}>{u}</option>
-            ))}
-          </select>
+          {/* appearance-none: the native control ignores border-radius, so its
+              corners never matched the number input. */}
+          <div className="relative">
+            <select
+              value={unit}
+              onChange={e => {
+                setUnit(e.target.value as Unit)
+                setActivePreset(null)
+              }}
+              className="h-8 w-full appearance-none rounded-lg border border-input bg-transparent pr-7 pl-2.5 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              aria-label="Unit"
+            >
+              {(Object.keys(MS_PER) as Unit[]).map(u => (
+                <option key={u} value={u}>{u}</option>
+              ))}
+            </select>
+            <ChevronDownIcon className="text-muted-foreground pointer-events-none absolute top-1/2 right-2 size-3.5 -translate-y-1/2" />
+          </div>
         </div>
         <DialogFooter>
+          <Button variant="ghost" onClick={archiveAll}>Archive all</Button>
           <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button onClick={save}>Save</Button>
         </DialogFooter>

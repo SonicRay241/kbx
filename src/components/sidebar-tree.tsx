@@ -71,7 +71,6 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Separator } from "@base-ui/react";
-import { cn } from "cn";
 
 /**
  * Sidebar as one flat, sortable list: optional ungrouped boards first, then a

@@ -471,7 +471,8 @@ export function Board({ boardId }: { boardId: number }) {
         open={archiveOpen}
         onOpenChange={setArchiveOpen}
         boardId={boardId}
-        archiveCutoff={board.archiveCutoff ?? 0}
+        archiveSpan={board.archiveSpan ?? null}
+        onSaved={(cutoff, span) => setBoard(b => (b ? { ...b, archiveCutoff: cutoff, archiveSpan: span } : b))}
       />
 
       <ConfirmDialog

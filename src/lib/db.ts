@@ -10,8 +10,12 @@ export type BoardRow = {
   /** Sidebar position (global; relative order inside the workspace). */
   sidebarOrder?: number
   columns: { id: string; title: string }[]
-  /** Done cards completed before this instant are archived (hidden on the board, listed on /list). 0 = never archived. */
-  archiveCutoff: number
+  /** Checkpoint instant: done cards completed before it are archived (hidden on the board, listed on /list).
+   * Manual — only moves when the archive dialog is saved. 0 = off. */
+  archiveCutoff?: number
+  /** Last chosen window (ms) the checkpoint was derived from; display-only, keeps the
+   * dialog showing the pick ("30 minutes") after the instant gets stale. */
+  archiveSpan?: number | null
   createdAt: number
   updatedAt?: number
   /** Per-field last-write timestamps for LWW merge (sync metadata). */
@@ -183,6 +187,47 @@ db.version(6)
       board.sidebarOrder ??= index++
     }
     await tx.table('boards').bulkPut(boards)
+  })
+
+db.version(7)
+  .stores({
+    boards: '++id, createdAt, uid, workspaceId, sidebarOrder',
+    workspaces: '++id, uid, order',
+    tags: '++id, boardId, [boardId+name], uid',
+    cards: '++id, boardId, column, [boardId+column], uid',
+    entitySyncMeta: 'id',
+    syncMeta: 'key',
+    deletedEntities: 'id',
+  })
+  .upgrade(async tx => {
+    // v6 → v7: the archive setting becomes a rolling window instead of a frozen
+    // instant (a fixed cutoff stopped archiving anything completed after it).
+    await tx.table('boards').toCollection().modify((board: BoardRow & { archiveCutoff?: number; archiveAfter?: number | null }) => {
+      const cutoff = board.archiveCutoff ?? 0
+      board.archiveAfter = cutoff > 0 ? Math.max(0, Date.now() - cutoff) : null
+      delete board.archiveCutoff
+    })
+  })
+
+db.version(8)
+  .stores({
+    boards: '++id, createdAt, uid, workspaceId, sidebarOrder',
+    workspaces: '++id, uid, order',
+    tags: '++id, boardId, [boardId+name], uid',
+    cards: '++id, boardId, column, [boardId+column], uid',
+    entitySyncMeta: 'id',
+    syncMeta: 'key',
+    deletedEntities: 'id',
+  })
+  .upgrade(async tx => {
+    // v7 → v8: the window becomes a manual checkpoint again. Freeze the instant
+    // once, and keep the span so the dialog can show what was picked.
+    await tx.table('boards').toCollection().modify((board: BoardRow & { archiveCutoff?: number; archiveAfter?: number | null }) => {
+      const span = board.archiveAfter
+      board.archiveSpan = span ?? null
+      board.archiveCutoff = span == null ? 0 : Date.now() - span
+      delete board.archiveAfter
+    })
   })
 
 // Rightmost column is the finished state (leftmost for RTL boards): cards become draggable once all their upstream cards are here.
