@@ -15,7 +15,10 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { Kbd } from "@/components/ui/kbd";
+import { useShortcut, useShortcutLabel } from "@/lib/shortcuts";
 import { HomeIcon, SearchIcon, LayersPlusIcon } from "lucide-react";
 import { SyncPanel } from "@/components/sync/sync-panel";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -42,13 +45,22 @@ const CreateBoardContext = createContext<{
 
 export const useCreateBoard = () => useContext(CreateBoardContext);
 
+/** Sidebar toggle lives here because it needs the provider context. */
+function SidebarShortcuts() {
+  const { toggleSidebar } = useSidebar();
+  useShortcut("toggle-sidebar", toggleSidebar);
+  return null;
+}
+
 export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { boardId: routeBoardId } = useParams({ strict: false });
   const activeId = routeBoardId ? Number(routeBoardId) : null;
+  const searchShortcut = useShortcutLabel("toggle-search-modal");
 
   const [createOpen, setCreateOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  useShortcut("toggle-search-modal", () => setSearchOpen((open) => !open));
   const [newName, setNewName] = useState("");
 
   const createBoard = () => {
@@ -72,6 +84,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <CreateBoardContext.Provider value={{ open: openCreateBoard }}>
       <SidebarProvider>
+        <SidebarShortcuts />
         <Sidebar collapsible="icon">
           <SidebarHeader className="pb-0">
             <SidebarMenu>
@@ -108,9 +121,24 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <SidebarMenuButton
                     className="[&>svg]:size-3.5"
                     onClick={() => setSearchOpen(true)}
+                    tooltip={
+                      searchShortcut ? (
+                        <span className="flex items-center gap-1.5">
+                          Search
+                          <Kbd>{searchShortcut}</Kbd>
+                        </span>
+                      ) : (
+                        "Search"
+                      )
+                    }
                   >
                     <SearchIcon />
                     <span>Search</span>
+                    {searchShortcut && (
+                      <Kbd className="ml-auto opacity-0 transition-opacity group-hover/menu-button:opacity-100">
+                        {searchShortcut}
+                      </Kbd>
+                    )}
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>

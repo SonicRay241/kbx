@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useLiveQuery } from "dexie-react-hooks";
 import { SearchIcon } from "lucide-react";
@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { softAccentBadge } from "@/components/constants/colors";
+import { useShortcut } from "@/lib/shortcuts";
 
 export const Route = createFileRoute("/boards/$boardId/list")({
   component: BoardListRoute,
@@ -28,6 +29,8 @@ function BoardListRoute() {
 /** All tasks on one board, ordered: unfinished columns first, then by completion date. */
 function BoardList({ boardId }: { boardId: number }) {
   const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  useShortcut("focus-searchbar", () => searchRef.current?.focus());
   const board = useLiveQuery(() => db.boards.get(boardId));
   const cards = useLiveQuery(() =>
     db.cards.where("boardId").equals(boardId).toArray(),
@@ -67,6 +70,7 @@ function BoardList({ boardId }: { boardId: number }) {
         <div className="relative min-w-56">
           <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2" />
           <Input
+            ref={searchRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search…"
