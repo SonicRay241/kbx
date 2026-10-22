@@ -28,3 +28,17 @@ export const OUTLINE_ACCENTS = [
 export function softAccentBadge(index: number) {
   return `font-normal ${SOFT_ACCENTS[index % SOFT_ACCENTS.length]} ${OUTLINE_ACCENTS[index % OUTLINE_ACCENTS.length]}`;
 }
+
+/** State label color only (no fill) — for plain-text column labels. */
+export const TEXT_ACCENTS = [
+  "text-slate-600 dark:text-slate-400",
+  "text-amber-600 dark:text-amber-400",
+  "text-green-600 dark:text-green-400",
+  "text-sky-600 dark:text-sky-400",
+  "text-violet-600 dark:text-violet-400",
+  "text-rose-600 dark:text-rose-400",
+];
+
+export function accentText(index: number) {
+  return TEXT_ACCENTS[index % TEXT_ACCENTS.length];
+}
