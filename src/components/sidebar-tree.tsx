@@ -70,6 +70,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { Separator } from "@base-ui/react";
+import { cn } from "cn";
 
 /**
  * Sidebar as one flat, sortable list: optional ungrouped boards first, then a
@@ -420,7 +422,10 @@ export function SidebarTree({ activeId, onCreateBoard }: { activeId: number | nu
                   : false;
                 if (folded) return null;
                 return (
-                  <SortableRow key={entry.key} id={entry.key} className={board.workspaceId ? "pl-4" : ""}>
+                  <SortableRow key={entry.key} id={entry.key} className={board.workspaceId ? "relative pl-6" : ""}>
+                    {board.workspaceId &&
+                      <Separator orientation="vertical" className="absolute left-4 w-px h-full bg-foreground"/>
+                    }
                     {editing?.kind === "board" && editing.id === board.id ? (
                       <SidebarMenuButton asChild>
                         {editingInput(editing, (name) => void renameBoard(board.id!, name), "Rename board")}
