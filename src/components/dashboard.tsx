@@ -189,22 +189,24 @@ function ProjectCard({ entry }: { entry: BoardStats }) {
     <Link
       to="/boards/$boardId"
       params={{ boardId: String(board.id) }}
-      className="ring-foreground/10 bg-card col-span-2 sm:col-span-1 hover:bg-sidebar-accent flex flex-col gap-3 rounded-xl p-5 ring-1 transition-colors"
+      className="ring-foreground/10 bg-card col-span-2 sm:col-span-1 hover:bg-sidebar-accent flex flex-col justify-between gap-3 rounded-xl p-5 ring-1 transition-colors"
     >
-      <div className="flex min-w-0 items-center gap-2">
-        <span className={`size-2 shrink-0 rounded-full ${accent}`} />
-        <h3 className="truncate text-sm font-semibold">{board.name}</h3>
-        <span className="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums">
-          {finished}/{total}
-        </span>
-      </div>
-      <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-        {counts.map((col, i) => (
-          <div key={col.id} className="flex items-baseline justify-between gap-2 text-xs">
-            <span className={`truncate ${accentText(i)}`}>{col.title}</span>
-            <span className="font-medium tabular-nums">{col.count}</span>
-          </div>
-        ))}
+      <div className="space-y-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`size-2 shrink-0 rounded-full ${accent}`} />
+          <h3 className="truncate text-sm font-semibold">{board.name}</h3>
+          <span className="text-muted-foreground ml-auto shrink-0 text-xs tabular-nums">
+            {finished}/{total}
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+          {counts.map((col, i) => (
+            <div key={col.id} className="flex items-baseline justify-between gap-2 text-xs">
+              <span className={`truncate ${accentText(i)}`}>{col.title}</span>
+              <span className="font-medium tabular-nums">{col.count}</span>
+            </div>
+          ))}
+        </div>
       </div>
       <div className="space-y-1.5">
         <div className="text-muted-foreground flex items-center justify-between text-xs">
