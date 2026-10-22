@@ -63,7 +63,7 @@ export function ColumnsDialog({ open, onOpenChange, columns, onChangeColumns, on
                 aria-label={`Rename column ${c.title}`}
                 className={i === columns.length - 1 ? 'border-green-600/40' : ''}
               />
-              {i !== columns.length - 1 && (
+              {/* {i !== columns.length - 1 && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -73,7 +73,7 @@ export function ColumnsDialog({ open, onOpenChange, columns, onChangeColumns, on
                 >
                   ✓ Finished
                 </Button>
-              )}
+              )} */}
               <Button
                 variant="ghost"
                 size="icon-sm"

@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/kanban'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ArchiveIcon, GripVerticalIcon, PlusIcon } from 'lucide-react'
+import { ArchiveIcon, ColumnsSettingsIcon, GripVerticalIcon, PlusIcon } from 'lucide-react'
 import { BoardCard } from '@/components/board-card'
 import { UpstreamDialog } from '@/components/upstream-dialog'
 import { ColumnsDialog } from '@/components/columns-dialog'
@@ -23,6 +23,7 @@ import { ArchiveDialog } from '@/components/archive-dialog'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { BoardHeaderSlot } from '@/routes/boards/$boardId'
 import { ACCENTS } from './constants/colors'
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
 
 /** Preserves unknown column ids (cards whose column no longer exists still render). */
 function groupByColumn(cards: CardData[], columns: { id: string }[]): Record<string, CardData[]> {
@@ -282,12 +283,22 @@ export function Board({ boardId }: { boardId: number }) {
   return (
     <div className="w-full h-full gap-4">
       <BoardHeaderSlot>
-        <Button variant="outline" size="icon" className='size-7 rounded-md' onClick={() => setArchiveOpen(true)}>
-          <ArchiveIcon className='size-3 stroke-2'/>
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>
-          Columns
-        </Button>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="icon" className='size-7 rounded-md' onClick={() => setArchiveOpen(true)}>
+              <ArchiveIcon className='size-3 stroke-2'/>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Archive</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="icon" className='size-7 rounded-md' onClick={() => setColumnsOpen(true)}>
+              <ColumnsSettingsIcon className='size-3 stroke-2'/>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Columns settings</TooltipContent>
+        </Tooltip>
       </BoardHeaderSlot>
       <div className="overflow-x-auto h-full">
         <Kanban
