@@ -37,7 +37,11 @@ export function TaskSelector({
 }: TaskSelectorProps) {
   const [query, setQuery] = useState('')
   const q = query.trim().toLowerCase()
-  const visible = q ? cards.filter((c) => c.title.toLowerCase().includes(q)) : cards
+  const visible = q
+    ? cards.filter(
+        (c) => c.title.toLowerCase().includes(q) || (c.description ?? '').toLowerCase().includes(q),
+      )
+    : cards
 
   return (
     <Popover>

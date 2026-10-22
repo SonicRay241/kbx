@@ -29,6 +29,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { SidebarTree } from "@/components/sidebar-tree";
+import { SearchDialog } from "@/components/search-dialog";
 
 /**
  * Persistent shell: sidebar with board switcher + the new-board dialog.
@@ -47,6 +48,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const activeId = routeBoardId ? Number(routeBoardId) : null;
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [newName, setNewName] = useState("");
 
   const createBoard = () => {
@@ -103,11 +105,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuButton className="[&>svg]:size-3.5" asChild>
-                    <button>
-                      <SearchIcon />
-                      <span>Search</span>
-                    </button>
+                  <SidebarMenuButton
+                    className="[&>svg]:size-3.5"
+                    onClick={() => setSearchOpen(true)}
+                  >
+                    <SearchIcon />
+                    <span>Search</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
@@ -129,6 +132,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </header>
           {children}
         </SidebarInset>
+
+        <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
 
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
           <DialogContent className="max-w-sm">

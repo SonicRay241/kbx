@@ -38,7 +38,12 @@ function BoardList({ boardId }: { boardId: number }) {
     const columnIndex = new Map(board.columns.map((c, i) => [c.id, i]));
     const q = query.trim().toLowerCase();
     return cards
-      .filter((c: Card) => !q || c.title.toLowerCase().includes(q))
+      .filter(
+        (c: Card) =>
+          !q ||
+          c.title.toLowerCase().includes(q) ||
+          (c.description ?? '').toLowerCase().includes(q),
+      )
       .sort(
         (a: Card, b: Card) =>
           // null completedAt sorts first, so todo/doing come before finished cards
