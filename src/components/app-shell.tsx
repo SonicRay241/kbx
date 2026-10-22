@@ -294,7 +294,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 autoFocus
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                placeholder="BoardRow name"
+                placeholder="Board name"
                 className="my-4"
               />
               <DialogFooter>
