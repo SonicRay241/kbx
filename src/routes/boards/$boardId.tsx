@@ -52,6 +52,9 @@ function BoardRoute() {
           db.tags.where('boardId').equals(boardId).toArray()
         ])
         setBoard(p ?? null)
+        if (p) {
+          document.title = `kbx | ${p.name}`
+        }
       })()
     }, [boardId])
 
