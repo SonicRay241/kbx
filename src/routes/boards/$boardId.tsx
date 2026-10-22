@@ -7,7 +7,6 @@ import {
 } from "@tanstack/react-router";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
-import { useLiveQuery } from "dexie-react-hooks";
 import { db, type BoardRow } from "@/lib/db";
 
 export const Route = createFileRoute("/boards/$boardId")({
@@ -29,6 +28,9 @@ function getAnchorPosition(suffix: string | undefined) {
   switch (suffix) {
     case "list":
       return "position-anchor-[--list]";
+
+    case "lineage":
+      return "position-anchor-[--lineage]";
 
     default:
       return "position-anchor-[--board]";
@@ -61,12 +63,12 @@ function BoardRoute() {
         <div className="px-4 space-y-4 pb-4">
           <h1 className="text-xl font-medium">{board.name}</h1>
           <div className="flex">
-            <div className="bg-muted shadow-xs isolate flex rounded-md border h-7">
+            <div className="bg-muted shadow-inner isolate flex rounded-md border h-7">
               {/* One pill, re-anchored to the active tab. The anchor-name lives on each link. */}
               <span
                 aria-hidden
                 className={cn(
-                  "bg-card border pointer-events-none absolute -z-10 rounded-sm transition-all",
+                  "bg-card border pointer-events-none absolute -z-10 rounded-sm transition-all shadow-xs",
                   "top-[anchor(top)] right-[anchor(right)] bottom-[anchor(bottom)] left-[anchor(left)]",
                   getAnchorPosition(suffix),
                 )}
@@ -91,6 +93,16 @@ function BoardRoute() {
                 activeProps={{ className: "text-card-foreground" }}
               >
                 List
+              </Link>
+              <Link
+                to="/boards/$boardId/lineage"
+                params={{ boardId: String(boardId) }}
+                className={cn(
+                  "flex items-center justify-center text-muted-foreground anchor-[--lineage] rounded-md px-4 h-full text-xs transition-all",
+                )}
+                activeProps={{ className: "text-card-foreground" }}
+              >
+                Lineage
               </Link>
             </div>
             <div

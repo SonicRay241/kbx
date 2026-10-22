@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as OauthCallbackRouteImport } from './routes/oauth-callback'
 import { Route as BoardsBoardIdRouteImport } from './routes/boards/$boardId'
 import { Route as BoardsBoardIdIndexRouteImport } from './routes/boards/$boardId/index'
+import { Route as BoardsBoardIdLineageRouteImport } from './routes/boards/$boardId/lineage'
 import { Route as BoardsBoardIdListRouteImport } from './routes/boards/$boardId/list'
 
 const IndexRoute = IndexRouteImport.update({
@@ -35,6 +36,11 @@ const BoardsBoardIdIndexRoute = BoardsBoardIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => BoardsBoardIdRoute,
 } as any)
+const BoardsBoardIdLineageRoute = BoardsBoardIdLineageRouteImport.update({
+  id: '/lineage',
+  path: '/lineage',
+  getParentRoute: () => BoardsBoardIdRoute,
+} as any)
 const BoardsBoardIdListRoute = BoardsBoardIdListRouteImport.update({
   id: '/list',
   path: '/list',
@@ -45,12 +51,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/oauth-callback': typeof OauthCallbackRoute
   '/boards/$boardId': typeof BoardsBoardIdRouteWithChildren
+  '/boards/$boardId/lineage': typeof BoardsBoardIdLineageRoute
   '/boards/$boardId/list': typeof BoardsBoardIdListRoute
   '/boards/$boardId/': typeof BoardsBoardIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/oauth-callback': typeof OauthCallbackRoute
+  '/boards/$boardId/lineage': typeof BoardsBoardIdLineageRoute
   '/boards/$boardId/list': typeof BoardsBoardIdListRoute
   '/boards/$boardId': typeof BoardsBoardIdIndexRoute
 }
@@ -59,6 +67,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/oauth-callback': typeof OauthCallbackRoute
   '/boards/$boardId': typeof BoardsBoardIdRouteWithChildren
+  '/boards/$boardId/lineage': typeof BoardsBoardIdLineageRoute
   '/boards/$boardId/list': typeof BoardsBoardIdListRoute
   '/boards/$boardId/': typeof BoardsBoardIdIndexRoute
 }
@@ -68,15 +77,22 @@ export interface FileRouteTypes {
     | '/'
     | '/oauth-callback'
     | '/boards/$boardId'
+    | '/boards/$boardId/lineage'
     | '/boards/$boardId/list'
     | '/boards/$boardId/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/oauth-callback' | '/boards/$boardId/list' | '/boards/$boardId'
+  to:
+    | '/'
+    | '/oauth-callback'
+    | '/boards/$boardId/lineage'
+    | '/boards/$boardId/list'
+    | '/boards/$boardId'
   id:
     | '__root__'
     | '/'
     | '/oauth-callback'
     | '/boards/$boardId'
+    | '/boards/$boardId/lineage'
     | '/boards/$boardId/list'
     | '/boards/$boardId/'
   fileRoutesById: FileRoutesById
@@ -117,6 +133,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BoardsBoardIdIndexRouteImport
       parentRoute: typeof BoardsBoardIdRoute
     }
+    '/boards/$boardId/lineage': {
+      id: '/boards/$boardId/lineage'
+      path: '/lineage'
+      fullPath: '/boards/$boardId/lineage'
+      preLoaderRoute: typeof BoardsBoardIdLineageRouteImport
+      parentRoute: typeof BoardsBoardIdRoute
+    }
     '/boards/$boardId/list': {
       id: '/boards/$boardId/list'
       path: '/list'
@@ -128,11 +151,13 @@ declare module '@tanstack/react-router' {
 }
 
 interface BoardsBoardIdRouteChildren {
+  BoardsBoardIdLineageRoute: typeof BoardsBoardIdLineageRoute
   BoardsBoardIdListRoute: typeof BoardsBoardIdListRoute
   BoardsBoardIdIndexRoute: typeof BoardsBoardIdIndexRoute
 }
 
 const BoardsBoardIdRouteChildren: BoardsBoardIdRouteChildren = {
+  BoardsBoardIdLineageRoute: BoardsBoardIdLineageRoute,
   BoardsBoardIdListRoute: BoardsBoardIdListRoute,
   BoardsBoardIdIndexRoute: BoardsBoardIdIndexRoute,
 }

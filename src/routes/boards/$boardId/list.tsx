@@ -7,8 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { BoardHeaderSlot } from '@/routes/boards/$boardId'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { cn } from 'cn'
-import { SOFT_ACCENTS } from '@/components/constants/colors'
+import { softAccentBadge } from '@/components/constants/colors'
 
 export const Route = createFileRoute('/boards/$boardId/list')({
   component: BoardListRoute,
@@ -72,10 +71,7 @@ function BoardList({ boardId }: { boardId: number }) {
             <TableRow key={card.id}>
               <TableCell className="font-medium">{card.title}</TableCell>
               <TableCell>
-                <Badge variant="outline" className={cn(
-                  "text-primary-foreground font-normal",
-                  SOFT_ACCENTS[columnIdx(card.column) % SOFT_ACCENTS.length]
-                )}>
+                <Badge variant="outline" className={softAccentBadge(columnIdx(card.column))}>
                   {columnTitle(card.column)}
                 </Badge>
               </TableCell>

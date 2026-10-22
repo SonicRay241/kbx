@@ -154,3 +154,18 @@ export const DEFAULT_COLUMNS = [
 ]
 
 export { db }
+
+/**
+ * Cards archived on the board: finished (last column) before the board's cutoff.
+ * Hidden from the board and the lineage view by default; still selectable in the lineage picker.
+ */
+export function archivedCardIds(board: BoardRow | null | undefined, cards: Card[]): Set<number> {
+  const set = new Set<number>()
+  const cutoff = board?.archiveCutoff ?? 0
+  if (cutoff <= 0 || !board?.columns?.length) return set
+  const finished = board.columns[board.columns.length - 1].id
+  for (const card of cards) {
+    if (card.column === finished && card.completedAt !== null && card.completedAt < cutoff) set.add(card.id)
+  }
+  return set
+}

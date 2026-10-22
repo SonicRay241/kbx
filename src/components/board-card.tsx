@@ -19,15 +19,26 @@ interface BoardCardProps extends Omit<
   onEdit?: (id: number) => void;
 }
 
-export function BoardCard({
+type TaskCardProps = {
+  card: CardData;
+  cardById: Map<number, CardData>;
+  tagById: Map<number, Tag>;
+  finishedColumnId: string;
+  /** Column state badge; only rendered where the column is not implied by layout (lineage view). */
+  status?: { label: string; className?: string };
+  isOverlay?: boolean;
+  onEdit?: (id: number) => void;
+};
+
+export function TaskCard({
   card,
   cardById,
   tagById,
   finishedColumnId,
+  status,
   isOverlay,
   onEdit,
-  ...props
-}: BoardCardProps) {
+}: TaskCardProps) {
   const upstreams = card.upstreamIds
     .map((id) => cardById.get(id))
     .filter((c) => c) as CardData[];
@@ -39,13 +50,13 @@ export function BoardCard({
     : null;
   const blocked = upstreams.length > 0 && doneCount < upstreams.length;
 
-  const inner = (
+  return (
     <Card
       size="sm"
       onClick={onEdit ? () => onEdit(card.id!) : undefined}
       className={cn(
         "overflow-hidden shadow-none transition-all rotate-0",
-        !isOverlay && "hover:-translate-y-0.5 cursor-pointer",
+        onEdit && "hover:-translate-y-0.5 cursor-pointer",
         isOverlay && "ring-primary/20 rotate-1 ring-2",
       )}
     >
@@ -54,7 +65,12 @@ export function BoardCard({
           <h3 className="line-clamp-2 text-sm leading-snug font-semibold">
             {card.title}
           </h3>
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-1">
+            {status && (
+              <Badge variant="outline" className={cn("rounded", status.className)}>
+                {status.label}
+              </Badge>
+            )}
             {blocked ? (
               <Badge variant="destructive" className="rounded">
                 Blocked
@@ -104,6 +120,35 @@ export function BoardCard({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+export function BoardCard({
+  card,
+  cardById,
+  tagById,
+  finishedColumnId,
+  isOverlay,
+  onEdit,
+  ...props
+}: BoardCardProps) {
+  const upstreams = card.upstreamIds
+    .map((id) => cardById.get(id))
+    .filter((c) => c) as CardData[];
+  const doneCount = upstreams.filter(
+    (c) => c.column === finishedColumnId,
+  ).length;
+  const blocked = upstreams.length > 0 && doneCount < upstreams.length;
+
+  const inner = (
+    <TaskCard
+      card={card}
+      cardById={cardById}
+      tagById={tagById}
+      finishedColumnId={finishedColumnId}
+      isOverlay={isOverlay}
+      onEdit={onEdit}
+    />
   );
 
   return (

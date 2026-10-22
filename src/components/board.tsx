@@ -1,7 +1,7 @@
 import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import type { KanbanMoveEvent } from '@/components/ui/kanban'
 
-import { db, DEFAULT_COLUMNS, type Card as CardData, type BoardRow, type Tag } from '@/lib/db'
+import { archivedCardIds, db, DEFAULT_COLUMNS, type Card as CardData, type BoardRow, type Tag } from '@/lib/db'
 import { createCard, updateCard, deleteCard, moveCards, migrateCardsColumn, setBoardColumns } from '@/lib/mutations'
 import { cn } from '@/lib/utils'
 import {
@@ -138,16 +138,7 @@ export function Board({ boardId }: { boardId: number }) {
 
   // Archived = finished before the board's cutoff. Hidden from the board,
   // still listed on /list (searchable + restorable).
-  const archivedById = useMemo(() => {
-    const cutoff = board?.archiveCutoff ?? 0
-    const set = new Set<number>()
-    if (cutoff > 0) {
-      for (const c of cards) {
-        if (c.column === finishedColumnId && c.completedAt !== null && c.completedAt < cutoff) set.add(c.id)
-      }
-    }
-    return set
-  }, [board?.archiveCutoff, cards, finishedColumnId])
+  const archivedById = useMemo(() => archivedCardIds(board, cards), [board, cards])
 
   const cardById = useMemo(() => new Map(cards.map(c => [c.id!, c])), [cards])
   const tagById = useMemo(() => new Map(tags.map(t => [t.id!, t])), [tags])
@@ -294,9 +285,9 @@ export function Board({ boardId }: { boardId: number }) {
         <Button variant="outline" size="icon" className='size-7 rounded-md' onClick={() => setArchiveOpen(true)}>
           <ArchiveIcon className='size-3 stroke-2'/>
         </Button>
-        {/* <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>
+        <Button variant="outline" size="sm" onClick={() => setColumnsOpen(true)}>
           Columns
-        </Button> */}
+        </Button>
       </BoardHeaderSlot>
       <div className="overflow-x-auto h-full">
         <Kanban
