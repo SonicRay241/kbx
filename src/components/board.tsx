@@ -22,14 +22,7 @@ import { ColumnsDialog } from '@/components/columns-dialog'
 import { ArchiveDialog } from '@/components/archive-dialog'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { BoardHeaderSlot } from '@/routes/boards/$boardId'
-
-const ACCENTS = [
-  'bg-sky-600 dark:bg-sky-400',
-  'bg-amber-600 dark:bg-amber-400',
-  'bg-green-600 dark:bg-green-400',
-  'bg-violet-600 dark:bg-violet-400',
-  'bg-rose-600 dark:bg-rose-400'
-]
+import { ACCENTS } from './constants/colors'
 
 /** Preserves unknown column ids (cards whose column no longer exists still render). */
 function groupByColumn(cards: CardData[], columns: { id: string }[]): Record<string, CardData[]> {

@@ -1,12 +1,10 @@
 import type { ComponentProps } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { KanbanItem, KanbanItemHandle } from "@/components/ui/kanban";
 import { cn } from "@/lib/utils";
-import { GitBranchIcon } from "lucide-react";
 import type { Card as CardData, Tag } from "@/lib/db";
 
 interface BoardCardProps extends Omit<
