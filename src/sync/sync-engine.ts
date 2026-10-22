@@ -1,4 +1,4 @@
-import { db, type BoardRow, type Card, type Tag } from '@/lib/db'
+import { db, type BoardRow, type Card, type Tag, type Workspace } from '@/lib/db'
 import { sha256Hex, type DriveIndex } from './wire'
 import { activeAdapter, type SyncAdapter } from './sync-sources'
 import { isWebdavConnected } from './adapters/webdav'
@@ -124,10 +124,13 @@ export function installRefocusSync(): void {
 // boardId / upstreamIds / tagIds references are translated per device at
 // write time (uid on the wire, local id in the DB) and never enter the hash.
 
-type UnitKind = 'board' | 'card' | 'tag'
+type UnitKind = 'workspace' | 'board' | 'card' | 'tag'
 
 const MERGEABLE_FIELDS: Record<UnitKind, readonly string[]> = {
-  board: ['name', 'columns', 'archiveCutoff'],
+  workspace: ['name', 'order'],
+  // workspaceId travels as the workspace uid; sidebarOrder keeps the sidebar
+  // arrangement identical across devices.
+  board: ['name', 'columns', 'archiveCutoff', 'workspaceId', 'sidebarOrder'],
   // boardId is mergeable: it travels as the board uid so a pulled card/tag can
   // find its local board row. Without it every pulled child is orphaned.
   card: ['boardId', 'column', 'title', 'description', 'order', 'upstreamIds', 'tagIds', 'completedAt'],
@@ -144,7 +147,7 @@ interface LocalUnit {
   rowTs: number
   /** Max(rowTs, field stamps) — races against tombstones. */
   updatedAt: number
-  row: BoardRow | Card | Tag
+  row: BoardRow | Card | Tag | Workspace
 }
 
 interface CloudUnitDoc {
@@ -155,6 +158,8 @@ interface CloudUnitDoc {
 }
 
 interface RefMaps {
+  workspaceUidById: Map<number, string>
+  workspaceIdByUid: Map<string, number>
   boardUidById: Map<number, string>
   cardUidById: Map<number, string>
   tagUidById: Map<number, string>
@@ -165,12 +170,15 @@ interface RefMaps {
 }
 
 async function loadRefMaps(): Promise<RefMaps> {
-  const [boards, cards, tags] = await Promise.all([
+  const [boards, cards, tags, workspaces] = await Promise.all([
     db.boards.toArray(),
     db.cards.toArray(),
     db.tags.toArray(),
+    db.workspaces.toArray(),
   ])
   return {
+    workspaceUidById: new Map(workspaces.map((w) => [w.id!, w.uid])),
+    workspaceIdByUid: new Map(workspaces.map((w) => [w.uid, w.id!])),
     boardUidById: new Map(boards.map((b) => [b.id!, b.uid])),
     cardUidById: new Map(cards.map((c) => [c.id, c.uid])),
     tagUidById: new Map(tags.map((t) => [t.id!, t.uid])),
@@ -198,11 +206,12 @@ function asRefArray(value: unknown, byUid: Map<string, number>): number[] {
 }
 
 /** Stable payload the hash covers: mergeable fields with uid-translated FKs. */
-function unitPayload(kind: UnitKind, row: BoardRow | Card | Tag, refs: RefMaps): string {
+function unitPayload(kind: UnitKind, row: BoardRow | Card | Tag | Workspace, refs: RefMaps): string {
   const raw = row as unknown as Record<string, unknown>
   const fields: Record<string, unknown> = {}
   for (const field of MERGEABLE_FIELDS[kind]) {
     if (field === 'boardId') fields[field] = refOut(refs.boardUidById, raw[field])
+    else if (field === 'workspaceId') fields[field] = refOut(refs.workspaceUidById, raw[field])
     else if (field === 'upstreamIds') fields[field] = Array.isArray(raw[field]) ? (raw[field] as number[]).map((id) => refOut(refs.cardUidById, id)) : []
     else if (field === 'tagIds') fields[field] = Array.isArray(raw[field]) ? (raw[field] as number[]).map((id) => refOut(refs.tagUidById, id)) : []
     else fields[field] = raw[field]
@@ -215,13 +224,14 @@ function unitPayload(kind: UnitKind, row: BoardRow | Card | Tag, refs: RefMaps):
 }
 
 async function loadLocalUnits(): Promise<LocalUnit[]> {
-  const [boards, cards, tags] = await Promise.all([
+  const [boards, cards, tags, workspaces] = await Promise.all([
     db.boards.toArray(),
     db.cards.toArray(),
     db.tags.toArray(),
+    db.workspaces.toArray(),
   ])
   const units: LocalUnit[] = []
-  const addUnit = (kind: UnitKind, row: BoardRow | Card | Tag): void => {
+  const addUnit = (kind: UnitKind, row: BoardRow | Card | Tag | Workspace): void => {
     const stamps = row.fieldTimestamps ?? {}
     const rowTs = row.updatedAt ?? row.createdAt
     const stampValues = MERGEABLE_FIELDS[kind].map((field) => stamps[field] ?? rowTs)
@@ -235,6 +245,7 @@ async function loadLocalUnits(): Promise<LocalUnit[]> {
       row,
     })
   }
+  for (const workspace of workspaces) addUnit('workspace', workspace)
   for (const board of boards) addUnit('board', board)
   for (const card of cards) addUnit('card', card)
   for (const tag of tags) addUnit('tag', tag)
@@ -280,7 +291,8 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
 
   // --- Pull phase: remote entries new or changed relative to local. Boards
   // first: pulled cards/tags must find their board row (uid FK translation).
-  const kindRank = (unitId: string) => (unitId.startsWith('board:') ? 0 : unitId.startsWith('tag:') ? 1 : 2)
+  const kindRank = (unitId: string) =>
+    unitId.startsWith('workspace:') ? 0 : unitId.startsWith('board:') ? 1 : unitId.startsWith('tag:') ? 2 : 3
   /** Refs dropped during the pull because the target row wasn't inserted yet. */
   const pendingRefs = new Map<number, { upstreamIds?: unknown; tagIds?: unknown }>()
   for (const [id, entry] of Object.entries(index.entries).sort(([a], [b]) => kindRank(a) - kindRank(b))) {
@@ -499,7 +511,7 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
 
 function splitUnitId(id: string): [UnitKind, string] {
   const [kind, rest] = id.split(':')
-  if ((kind !== 'board' && kind !== 'card' && kind !== 'tag') || !rest) {
+  if ((kind !== 'workspace' && kind !== 'board' && kind !== 'card' && kind !== 'tag') || !rest) {
     throw new Error(`Unknown sync unit id: ${id}`)
   }
   return [kind, rest]
@@ -577,17 +589,20 @@ async function updateUnitRow(
     // blank the local value on a merge.
     if (rawValue === undefined) continue
     if (field === 'boardId') patch[field] = refIn(refs.boardIdByUid, rawValue)
+    else if (field === 'workspaceId') patch[field] = refIn(refs.workspaceIdByUid, rawValue)
     else if (field === 'upstreamIds') patch[field] = asRefArray(rawValue, refs.cardIdByUid)
     else if (field === 'tagIds') patch[field] = asRefArray(rawValue, refs.tagIdByUid)
     else patch[field] = rawValue
   }
   patch.fieldTimestamps = merge.stamps
   patch.updatedAt = merge.rowTs
-  const table = kind === 'board' ? db.boards : kind === 'card' ? db.cards : db.tags
+  const table =
+    kind === 'workspace' ? db.workspaces : kind === 'board' ? db.boards : kind === 'card' ? db.cards : db.tags
   await table.update(rowId, patch as never)
 }
 
-async function getUnitRow(kind: UnitKind, rowId: number): Promise<BoardRow | Card | Tag | undefined> {
+async function getUnitRow(kind: UnitKind, rowId: number): Promise<BoardRow | Card | Tag | Workspace | undefined> {
+  if (kind === 'workspace') return db.workspaces.get(rowId)
   if (kind === 'board') return db.boards.get(rowId)
   if (kind === 'card') return db.cards.get(rowId)
   return db.tags.get(rowId)
@@ -605,12 +620,26 @@ async function putUnitRow(
   const fields = doc.fields
   const fallbackCreated = doc.rowTs || entryUpdatedAt || Date.now()
   const boardId = refIn(refs.boardIdByUid, fields.boardId)
-  if (kind !== 'board' && boardId === null) throw new OrphanedUnitError()
+  // Workspaces have no board parent; cards and tags must not outlive theirs.
+  if (kind !== 'board' && kind !== 'workspace' && boardId === null) throw new OrphanedUnitError()
 
+  if (kind === 'workspace') {
+    const row: Omit<Workspace, 'id'> = {
+      uid,
+      name: typeof fields.name === 'string' ? fields.name : 'Workspace',
+      order: Number(fields.order ?? 0),
+      createdAt: fallbackCreated,
+      updatedAt: doc.rowTs || entryUpdatedAt,
+      fieldTimestamps: doc.ts,
+    }
+    return { id: (await db.workspaces.add(row as Workspace))!, fields }
+  }
   if (kind === 'board') {
     const row: Omit<BoardRow, 'id'> = {
       uid,
       name: typeof fields.name === 'string' ? fields.name : 'Untitled',
+      workspaceId: refIn(refs.workspaceIdByUid, fields.workspaceId),
+      sidebarOrder: Number(fields.sidebarOrder ?? 0),
       columns: Array.isArray(fields.columns) ? (fields.columns as BoardRow['columns']) : [],
       archiveCutoff: Number(fields.archiveCutoff ?? 0) || 0,
       createdAt: fallbackCreated,
@@ -648,11 +677,12 @@ async function putUnitRow(
 }
 
 /** Cloud doc for a unit's row: mergeable fields with uid-translated FKs. */
-function cloudDoc(kind: UnitKind, row: BoardRow | Card | Tag, refs: RefMaps): string {
+function cloudDoc(kind: UnitKind, row: BoardRow | Card | Tag | Workspace, refs: RefMaps): string {
   const raw = row as unknown as Record<string, unknown>
   const fields: Record<string, unknown> = {}
   for (const field of MERGEABLE_FIELDS[kind]) {
     if (field === 'boardId') fields[field] = refOut(refs.boardUidById, raw[field])
+    else if (field === 'workspaceId') fields[field] = refOut(refs.workspaceUidById, raw[field])
     else if (field === 'upstreamIds') fields[field] = Array.isArray(raw[field]) ? (raw[field] as number[]).map((id) => refOut(refs.cardUidById, id)) : []
     else if (field === 'tagIds') fields[field] = Array.isArray(raw[field]) ? (raw[field] as number[]).map((id) => refOut(refs.tagUidById, id)) : []
     else fields[field] = raw[field]
@@ -664,7 +694,7 @@ function cloudDoc(kind: UnitKind, row: BoardRow | Card | Tag, refs: RefMaps): st
   return JSON.stringify(doc)
 }
 
-function syncFileName(kind: UnitKind, row: BoardRow | Card | Tag): string {
+function syncFileName(kind: UnitKind, row: BoardRow | Card | Tag | Workspace): string {
   const raw = row as unknown as Record<string, unknown>
   const label = sanitizeFilename(String(raw.name ?? raw.title ?? kind))
   const numericId = kind === 'card' ? (row as Card).id : row.id ?? 0
@@ -684,7 +714,17 @@ function sanitizeFilename(name: string): string {
  * board → its cards + tags; card → other cards' upstreamIds; tag → cards' tagIds.
  */
 async function deleteUnitRow(kind: UnitKind, uid: string): Promise<void> {
-  if (kind === 'board') {
+  if (kind === 'workspace') {
+    const workspace = await db.workspaces.where('uid').equals(uid).first()
+    if (!workspace?.id) return
+    await db.transaction('rw', db.boards, db.workspaces, async () => {
+      await db.boards
+        .where('workspaceId')
+        .equals(workspace.id!)
+        .modify({ workspaceId: null })
+      await db.workspaces.delete(workspace.id!)
+    })
+  } else if (kind === 'board') {
     const board = await db.boards.where('uid').equals(uid).first()
     if (!board?.id) return
     await db.transaction('rw', db.boards, db.cards, db.tags, async () => {

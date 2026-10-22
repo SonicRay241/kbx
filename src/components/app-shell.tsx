@@ -1,40 +1,22 @@
 import { createContext, useContext, useState, type ReactNode } from "react";
-import { useLiveQuery } from "dexie-react-hooks";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 
-import { db, DEFAULT_COLUMNS } from "@/lib/db";
-import {
-  createBoard as createBoardRow,
-  renameBoard as renameBoardRow,
-  deleteBoard as deleteBoardRow,
-} from "@/lib/mutations";
+import { DEFAULT_COLUMNS } from "@/lib/db";
+import { createBoard as createBoardRow } from "@/lib/mutations";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupAction,
-  SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import {
-  PlusIcon,
-  MoreHorizontalIcon,
-  PencilIcon,
-  Trash2Icon,
-  HomeIcon,
-  SearchIcon,
-  LayersPlusIcon,
-} from "lucide-react";
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import { HomeIcon, SearchIcon, LayersPlusIcon } from "lucide-react";
 import { SyncPanel } from "@/components/sync/sync-panel";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
@@ -46,18 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+import { SidebarTree } from "@/components/sidebar-tree";
 
 /**
  * Persistent shell: sidebar with board switcher + the new-board dialog.
@@ -70,64 +41,13 @@ const CreateBoardContext = createContext<{
 
 export const useCreateBoard = () => useContext(CreateBoardContext);
 
-/** 3-dot menu button offering Rename / Remove. */
-function BoardDotMenu({
-  board,
-  onRename,
-  onRemove,
-}: {
-  board: { id: number; name: string };
-  onRename: (p: { id: number; name: string }) => void;
-  onRemove: (p: { id: number; name: string }) => void;
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <SidebarMenuAction
-          showOnHover
-          aria-label={`Board options for ${board.name}`}
-        >
-          <MoreHorizontalIcon />
-        </SidebarMenuAction>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent side="bottom" align="end">
-        <DropdownMenuItem
-          onClick={() => {
-            onRename(board);
-          }}
-        >
-          <PencilIcon className="size-3.5" />
-          Rename
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          variant="destructive"
-          onClick={() => {
-            onRemove(board);
-          }}
-        >
-          <Trash2Icon className="size-3.5" />
-          Remove
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
 export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const { boardId: routeBoardId } = useParams({ strict: false });
   const activeId = routeBoardId ? Number(routeBoardId) : null;
 
-  const boards = useLiveQuery(() => db.boards.orderBy("createdAt").toArray());
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
-  const [pendingDelete, setPendingDelete] = useState<{
-    id: number;
-    name: string;
-  } | null>(null);
-  const [editing, setEditing] = useState<{ id: number; name: string } | null>(
-    null,
-  );
 
   const createBoard = () => {
     const name = newName.trim();
@@ -163,7 +83,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                       <div className="flex aspect-square size-6 items-center justify-center rounded-sm bg-blue-600 text-white">
                         <LayersPlusIcon strokeWidth={2.5} />
                       </div>
-                      <span className="font-medium">Kbx</span>
+                      <span className="font-medium">kbx.</span>
                     </Link>
                     <SidebarTrigger className="p-1 absolute right-0 top-0.5 z-10 hover:opacity-100 group-data-[collapsible=icon]:opacity-0" />
                   </div>
@@ -192,91 +112,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroup>
-            <SidebarGroup>
-              <SidebarGroupLabel>Boards</SidebarGroupLabel>
-              <SidebarGroupAction
-                className="[&>svg]:size-3"
-                onClick={openCreateBoard}
-              >
-                <PlusIcon aria-label="New board" />
-              </SidebarGroupAction>
-              <SidebarGroupContent className="group-data-[collapsible=icon]:hidden">
-                <SidebarMenu>
-                  {boards?.map((p) => (
-                    <SidebarMenuItem key={p.id} className="group/sidebar-item">
-                      <BoardDotMenu
-                        board={{ id: p.id!, name: p.name }}
-                        onRename={setEditing}
-                        onRemove={setPendingDelete}
-                      />
-                      <ContextMenu>
-                        <ContextMenuTrigger asChild>
-                          <SidebarMenuButton
-                            asChild
-                            isActive={p.id === activeId}
-                          >
-                            {editing?.id === p.id ? (
-                              <input
-                                defaultValue={p.name}
-                                onClick={(e) => e.stopPropagation()}
-                                onBlur={(e) => {
-                                  const name = e.target.value.trim();
-                                  if (name && name !== p.name)
-                                    void renameBoardRow(p.id!, name);
-                                  setEditing(null);
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    e.preventDefault();
-                                    e.currentTarget.blur();
-                                  } else if (e.key === "Escape") {
-                                    setEditing(null);
-                                  }
-                                }}
-                                className="h-6 w-full rounded-sm border-none bg-sidebar-accent px-2 text-sm font-medium outline-hidden"
-                                aria-label="Rename board"
-                              />
-                            ) : (
-                              <button
-                                type="button"
-                                className="truncate"
-                                onClick={() =>
-                                  void navigate({
-                                    to: "/boards/$boardId",
-                                    params: { boardId: String(p.id) },
-                                  })
-                                }
-                              >
-                                {p.name}
-                              </button>
-                            )}
-                          </SidebarMenuButton>
-                        </ContextMenuTrigger>
-                        <ContextMenuContent>
-                          <ContextMenuItem
-                            onClick={() =>
-                              setEditing({ id: p.id!, name: p.name })
-                            }
-                          >
-                            <PencilIcon className="size-3.5" />
-                            Rename
-                          </ContextMenuItem>
-                          <ContextMenuItem
-                            variant="destructive"
-                            onClick={() =>
-                              setPendingDelete({ id: p.id!, name: p.name })
-                            }
-                          >
-                            <Trash2Icon className="size-3.5" />
-                            Remove
-                          </ContextMenuItem>
-                        </ContextMenuContent>
-                      </ContextMenu>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
+            <SidebarTree activeId={activeId} onCreateBoard={openCreateBoard} />
           </SidebarContent>
           <SidebarFooter className="pt-0">
             <div className="flex items-center gap-1">
@@ -328,19 +164,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           </DialogContent>
         </Dialog>
 
-        <ConfirmDialog
-          open={pendingDelete !== null}
-          onOpenChange={(o) => !o && setPendingDelete(null)}
-          title={`Delete board “${pendingDelete?.name}”?`}
-          description="All cards and upstream links in this board will be permanently removed."
-          onConfirm={() => {
-            if (!pendingDelete) return;
-            const wasActive = pendingDelete.id === activeId;
-            void deleteBoardRow(pendingDelete.id);
-            setPendingDelete(null);
-            if (wasActive) void navigate({ to: "/" });
-          }}
-        />
       </SidebarProvider>
     </CreateBoardContext.Provider>
   );

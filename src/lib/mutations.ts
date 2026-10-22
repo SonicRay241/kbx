@@ -1,4 +1,4 @@
-import { db, type BoardRow, type Card, type Tag } from '@/lib/db'
+import { db, type BoardRow, type Card, type Tag, type Workspace } from '@/lib/db'
 import { scheduleSync } from '@/sync/sync-engine'
 
 /**
@@ -25,14 +25,17 @@ const uuid = () => crypto.randomUUID()
 
 export async function createBoard(name: string, columns: BoardRow['columns']): Promise<BoardRow> {
   const now = Date.now()
+  const last = await db.boards.orderBy('sidebarOrder').last()
   const board: BoardRow = {
     uid: uuid(),
     name,
+    workspaceId: null,
+    sidebarOrder: (last?.sidebarOrder ?? -1) + 1,
     columns: columns.map((c) => ({ ...c })),
     archiveCutoff: 0,
     createdAt: now,
     updatedAt: now,
-    fieldTimestamps: { name: now, columns: now, archiveCutoff: now },
+    fieldTimestamps: { name: now, columns: now, archiveCutoff: now, sidebarOrder: now, workspaceId: now },
   }
   board.id = await db.boards.add(board)
   scheduleSync()
@@ -209,6 +212,79 @@ export async function deleteTags(ids: number[]): Promise<void> {
       if (tag) await db.deletedEntities.put({ id: `tag:${tag.uid}`, deletedAt: now })
     }
     await db.tags.bulkDelete(ids)
+  })
+  scheduleSync()
+}
+/** Sidebar grouping. Workspaces sync like boards; the folded state stays local
+ * (per device) in localStorage, keyed by uid. */
+export async function createWorkspace(name: string): Promise<Workspace> {
+  const now = Date.now()
+  const last = await db.workspaces.orderBy('order').last()
+  const workspace: Workspace = {
+    uid: uuid(),
+    name,
+    order: (last?.order ?? -1) + 1,
+    createdAt: now,
+    updatedAt: now,
+    fieldTimestamps: { name: now, order: now },
+  }
+  workspace.id = await db.workspaces.add(workspace)
+  scheduleSync()
+  return workspace
+}
+
+export async function renameWorkspace(id: number, name: string): Promise<void> {
+  await db.workspaces.update(id, stamped({ name }) as unknown as Partial<Workspace>)
+  scheduleSync()
+}
+
+/** Delete a workspace, leaving its boards ungrouped. */
+export async function deleteWorkspace(id: number): Promise<void> {
+  await db.transaction('rw', db.boards, db.workspaces, db.deletedEntities, async () => {
+    const workspace = await db.workspaces.get(id)
+    if (!workspace) return
+    const members = await db.boards.where('workspaceId').equals(id).toArray()
+    for (const board of members) {
+      await db.boards.update(board.id!, stamped({ workspaceId: null }) as unknown as Partial<BoardRow>)
+    }
+    await db.deletedEntities.put({ id: `workspace:${workspace.uid}`, deletedAt: Date.now() })
+    await db.workspaces.delete(id)
+  })
+  scheduleSync()
+}
+
+/** Assign a board to a workspace (null = ungrouped) and append it to the end. */
+export async function setBoardWorkspace(boardId: number, workspaceId: number | null): Promise<void> {
+  const siblings = await db.boards.where('workspaceId').equals(workspaceId ?? -1).toArray()
+  const last = await db.boards.orderBy('sidebarOrder').last()
+  const maxSibling = siblings.reduce((max, row) => Math.max(max, row.sidebarOrder ?? 0), -1)
+  await db.boards.update(
+    boardId,
+    stamped({ workspaceId, sidebarOrder: Math.max(last?.sidebarOrder ?? -1, maxSibling) + 1 }) as unknown as Partial<BoardRow>,
+  )
+  scheduleSync()
+}
+
+/** Persist a full sidebar arrangement: workspace order + per-board group/order. */
+export async function saveSidebarLayout(input: {
+  workspaces: number[]
+  boards: { id: number; workspaceId: number | null }[]
+}): Promise<void> {
+  await db.transaction('rw', db.boards, db.workspaces, async () => {
+    for (const [index, id] of input.workspaces.entries()) {
+      const row = await db.workspaces.get(id)
+      if (!row || row.order === index) continue
+      await db.workspaces.update(id, stamped({ order: index }) as unknown as Partial<Workspace>)
+    }
+    for (const [index, entry] of input.boards.entries()) {
+      const row = await db.boards.get(entry.id)
+      const workspaceId = entry.workspaceId ?? null
+      if (!row || (row.workspaceId ?? null) === workspaceId && row.sidebarOrder === index) continue
+      await db.boards.update(
+        entry.id,
+        stamped({ workspaceId, sidebarOrder: index }) as unknown as Partial<BoardRow>,
+      )
+    }
   })
   scheduleSync()
 }

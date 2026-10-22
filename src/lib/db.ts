@@ -5,12 +5,28 @@ export type BoardRow = {
   /** Cross-device identity: UUID minted at creation, travels with sync. */
   uid: string
   name: string
+  /** Sidebar grouping; null/undefined = ungrouped. Local numeric id of a Workspace row. */
+  workspaceId?: number | null
+  /** Sidebar position (global; relative order inside the workspace). */
+  sidebarOrder?: number
   columns: { id: string; title: string }[]
   /** Done cards completed before this instant are archived (hidden on the board, listed on /list). 0 = never archived. */
   archiveCutoff: number
   createdAt: number
   updatedAt?: number
   /** Per-field last-write timestamps for LWW merge (sync metadata). */
+  fieldTimestamps?: Record<string, number>
+}
+
+/** Collapsible sidebar group of boards (work, hobby, freelance…). */
+export type Workspace = {
+  id?: number
+  uid: string
+  name: string
+  /** Sidebar position among workspaces. */
+  order: number
+  createdAt: number
+  updatedAt?: number
   fieldTimestamps?: Record<string, number>
 }
 
@@ -69,6 +85,7 @@ export type DeletedEntity = {
 
 const db = new Dexie('kanban') as Dexie & {
   boards: EntityTable<BoardRow, 'id'>
+  workspaces: EntityTable<Workspace, 'id'>
   tags: EntityTable<Tag, 'id'>
   cards: EntityTable<Card, 'id'>
   entitySyncMeta: EntityTable<EntitySyncMeta, 'id'>
@@ -145,6 +162,27 @@ db.version(5)
     await tx.table('boards').toCollection().modify((board: BoardRow & { archiveCutoff?: number }) => {
       board.archiveCutoff ??= 0
     })
+  })
+
+db.version(6)
+  .stores({
+    boards: '++id, createdAt, uid, workspaceId, sidebarOrder',
+    workspaces: '++id, uid, order',
+    tags: '++id, boardId, [boardId+name], uid',
+    cards: '++id, boardId, column, [boardId+column], uid',
+    entitySyncMeta: 'id',
+    syncMeta: 'key',
+    deletedEntities: 'id',
+  })
+  .upgrade(async tx => {
+    // v5 → v6: workspaces + explicit sidebar order (creation order was the old one).
+    const boards = await tx.table('boards').orderBy('createdAt').toArray() as BoardRow[]
+    let index = 0
+    for (const board of boards) {
+      board.workspaceId ??= null
+      board.sidebarOrder ??= index++
+    }
+    await tx.table('boards').bulkPut(boards)
   })
 
 // Rightmost column is the finished state (leftmost for RTL boards): cards become draggable once all their upstream cards are here.
