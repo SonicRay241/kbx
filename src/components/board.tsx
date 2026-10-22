@@ -254,13 +254,46 @@ export function Board({ boardId }: { boardId: number }) {
       nextRecord[col.id] = col.id === overContainer ? targetItems : col.id === activeContainer ? withoutMoved : (layout[col.id] ?? [])
     }
 
+    // A card whose last upstream just finished jumps to the top of its column so
+    // it is easy to spot. Only *entering* the finished column can unblock others.
+    const promoted = new Set<number>()
+    if (commit && isCrossColumn && overContainer === finishedColumnId) {
+      const columnOf = new Map<number, string>()
+      for (const card of cards) columnOf.set(card.id, card.id === movedId ? finishedColumnId : card.column)
+      for (const card of cards) {
+        if (card.id === movedId || card.column === finishedColumnId) continue
+        if (!card.upstreamIds.includes(movedId)) continue
+        if (card.upstreamIds.every(uId => (columnOf.get(uId) ?? finishedColumnId) === finishedColumnId)) promoted.add(card.id)
+      }
+      for (const col of columns) {
+        const list = nextRecord[col.id] ?? []
+        if (!list.some(c => promoted.has(c.id))) continue
+        nextRecord[col.id] = [...list.filter(c => promoted.has(c.id)), ...list.filter(c => !promoted.has(c.id))]
+      }
+    }
+
     // Preview (commit: false): mirror into the drag ref for continued composition.
     // Commit: this IS the settled layout — state and DB updated directly, ref cleared.
     dragLayoutRef.current = commit ? null : nextRecord
     if (!commit) return
 
-    setCards(Object.values(nextRecord).flat())
-    void moveCards(nextRecord[overContainer].map((card, order) => ({ key: card.id!, changes: { order, column: card.column } })), finishedColumnId)
+    // Hidden (filtered) cards are not part of the composed layout; carry them
+    // through so toggling the filter back does not lose them until reload.
+    const visibleIds = new Set(Object.values(nextRecord).flat().map(c => c.id))
+    setCards([...cards.filter(c => !visibleIds.has(c.id)), ...Object.values(nextRecord).flat()])
+    // Persist every column whose ordering changed (the drop target plus any
+    // column that received a promoted card).
+    const changedColumns = columns.filter(col => {
+      const before = layout[col.id] ?? []
+      const after = nextRecord[col.id] ?? []
+      return before.length !== after.length || before.some((card, i) => card.id !== after[i]?.id)
+    })
+    void moveCards(
+      changedColumns.flatMap(col =>
+        (nextRecord[col.id] ?? []).map((card, order) => ({ key: card.id!, changes: { order, column: card.column } })),
+      ),
+      finishedColumnId,
+    )
   }
 
   // A new drag always starts from the current layout — compose previews against that.
