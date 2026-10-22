@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   Background,
+  BaseEdge,
   Handle,
   MarkerType,
   Position,
@@ -10,9 +11,11 @@ import {
   ReactFlowProvider,
   useReactFlow,
   type Edge,
+  type EdgeProps,
   type Node,
   type NodeProps,
 } from "@xyflow/react";
+import type { ELK, ElkExtendedEdge, ElkNode, ElkPoint } from "elkjs/lib/elk-api";
 import "@xyflow/react/dist/style.css";
 import { archivedCardIds, db, type Card, type Tag } from "@/lib/db";
 import { TaskSelector } from "@/components/task-selector";
@@ -62,275 +65,128 @@ function TaskNode({ data }: NodeProps<TaskFlowNode>) {
         status={data.status}
         />
       {data.hasUpstream && (
-        <Handle type="target" position={Position.Left} className="size-1.5! border-0! bg-muted-foreground!" />
+        <Handle type="target" position={Position.Left} className="size-1! border-0! opacity-0!" />
       )}
       {data.hasDownstream && (
-        <Handle type="source" position={Position.Right} className="size-1.5! border-0! bg-muted-foreground!" />
+        <Handle type="source" position={Position.Right} className="size-1! border-0! opacity-0!" />
       )}
     </div>
   );
 }
 
-/** Zero-size waypoint: keeps long edges inside the gaps between columns. */
-function DummyNode() {
-  return (
-    <div className="relative size-0">
-      <Handle type="target" position={Position.Left} className="opacity-0!" />
-      <Handle type="source" position={Position.Right} className="opacity-0!" />
-    </div>
-  );
-}
-
-const nodeTypes = { task: TaskNode, dummy: DummyNode };
+const nodeTypes = { task: TaskNode };
 
 const NODE_WIDTH = 224;
 const COLUMN_GAP = 96;
 const ROW_GAP = 20;
 const ESTIMATED_HEIGHT = 120;
 
+/** elkjs is ~1.5MB of layout engine; keep it out of the main chunk. */
+let elkPromise: Promise<ELK> | null = null;
+const getElk = () => (elkPromise ??= import("elkjs/lib/elk.bundled.js").then((mod) => new mod.default()));
+
 /**
- * Layered DAG layout. Depth = longest upstream chain, so upstream cards sit left
- * of the cards that depend on them. Edges that skip layers are split with
- * zero-size dummy nodes in every intermediate column: React Flow then routes each
- * segment inside the gap between two columns instead of cutting across the cards
- * of a column it flies over.
- * Within a layer, nodes are ordered by their neighbours' vertical center
- * (barycenter sweeps), which keeps siblings of the same downstream card adjacent.
- * Heights come from the rendered cards, so tall cards never overlap.
- * Relaxation is bounded by node count, so an accidental cycle (impossible via the
- * upstream picker) cannot hang.
+ * ELK's layered algorithm replaces the hand-rolled layout: longest-path layering,
+ * crossing minimisation, dummy nodes for edges that skip layers and orthogonal
+ * routing all come from the engine. `considerModelOrder` keeps the createdAt order
+ * whenever several orders are equally good, so the graph stays stable between
+ * renders.
  */
-type GraphNode = {
-  /** `n:<cardId>` for cards, `d:<up>-><down>:<depth>` for routing dummies. */
-  id: string;
-  card: Card | null;
-  depth: number;
-  parents: string[];
-  children: string[];
+const LAYOUT_OPTIONS: Record<string, string> = {
+  "elk.algorithm": "layered",
+  "elk.direction": "RIGHT",
+  "elk.edgeRouting": "ORTHOGONAL",
+  "elk.layered.nodePlacement.strategy": "NETWORK_SIMPLEX",
+  "elk.layered.crossingMinimization.strategy": "LAYER_SWEEP",
+  "elk.layered.crossingMinimization.greedySwitch.type": "TWO_SIDED",
+  "elk.layered.thoroughness": "12",
+  "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+  "elk.layered.nodePlacement.favorStraightEdges": "true",
+  "elk.layered.spacing.nodeNodeBetweenLayers": String(COLUMN_GAP),
+  "elk.spacing.nodeNode": String(ROW_GAP),
+  "elk.spacing.edgeNode": "12",
+  "elk.spacing.edgeEdge": "8",
+  "elk.layered.spacing.edgeNodeBetweenLayers": "12",
 };
 
-function layoutGraph(
-  cards: Card[],
-  selected: Set<number>,
-  cardById: Map<number, Card>,
-  tagById: Map<number, Tag>,
-  finishedColumnId: string,
-  statusOf: (column: string) => { label: string; className: string },
-  heights: Map<number, number>,
-  onMeasure: (id: number, height: number) => void,
-): { nodes: TaskFlowNode[]; edges: Edge[] } {
-  const included = cards.filter((c) => selected.has(c.id));
-  const byId = new Map(included.map((c) => [c.id, c]));
-  const parents = new Map<number, number[]>();
-  for (const card of included) {
-    parents.set(
-      card.id,
-      card.upstreamIds.filter((id) => byId.has(id)),
-    );
-  }
-
-  const depth = new Map<number, number>(included.map((c) => [c.id, 0]));
-  for (let pass = 0; pass < included.length; pass++) {
-    let changed = false;
-    for (const card of included) {
-      for (const parent of parents.get(card.id) ?? []) {
-        const next = (depth.get(parent) ?? 0) + 1;
-        if (next > (depth.get(card.id) ?? 0)) {
-          depth.set(card.id, next);
-          changed = true;
-        }
-      }
-    }
-    if (!changed) break;
-  }
-
-  const graph = new Map<string, GraphNode>();
-  const cardNodeId = (id: number) => `n:${id}`;
-  for (const card of included) {
-    graph.set(cardNodeId(card.id), {
-      id: cardNodeId(card.id),
-      card,
-      depth: depth.get(card.id) ?? 0,
-      parents: [],
-      children: [],
-    });
-  }
-  const link = (from: string, to: string) => {
-    graph.get(from)!.children.push(to);
-    graph.get(to)!.parents.push(from);
+function buildElkGraph(cards: Card[], selected: Set<number>, heights: Map<number, number>): ElkNode {
+  const included = cards.filter((card) => selected.has(card.id));
+  const shown = new Set(included.map((card) => card.id));
+  return {
+    id: "root",
+    layoutOptions: LAYOUT_OPTIONS,
+    children: included.map((card) => ({
+      id: String(card.id),
+      width: NODE_WIDTH,
+      height: heights.get(card.id) ?? ESTIMATED_HEIGHT,
+    })),
+    edges: included.flatMap((card) =>
+      card.upstreamIds
+        .filter((id) => shown.has(id))
+        .map((id) => ({ id: `${id}>${card.id}`, sources: [String(id)], targets: [String(card.id)] })),
+    ),
   };
-  for (const card of included) {
-    for (const up of parents.get(card.id) ?? []) {
-      const from = cardNodeId(up);
-      const to = cardNodeId(card.id);
-      const fromDepth = graph.get(from)!.depth;
-      const toDepth = graph.get(to)!.depth;
-      let previous = from;
-      for (let d = fromDepth + 1; d < toDepth; d++) {
-        const dummyId = `d:${up}->${card.id}:${d}`;
-        graph.set(dummyId, { id: dummyId, card: null, depth: d, parents: [], children: [] });
-        link(previous, dummyId);
-        previous = dummyId;
-      }
-      link(previous, to);
-    }
-  }
-
-  const layers = new Map<number, GraphNode[]>();
-  for (const node of graph.values()) {
-    const layer = layers.get(node.depth) ?? [];
-    layer.push(node);
-    layers.set(node.depth, layer);
-  }
-  for (const layer of layers.values()) {
-    layer.sort((a, b) => (a.card?.createdAt ?? 0) - (b.card?.createdAt ?? 0));
-  }
-
-  const heightOf = (node: GraphNode) => (node.card ? (heights.get(node.card.id) ?? ESTIMATED_HEIGHT) : 0);
-  const centerOf = (node: GraphNode) => (top.get(node.id) ?? 0) + heightOf(node) / 2;
-
-  // Order each layer by neighbour position; alternating direction reduces crossings.
-  const index = new Map<string, number>();
-  const reindex = () => layers.forEach((layer) => layer.forEach((node, i) => index.set(node.id, i)));
-  reindex();
-  const depths = [...layers.keys()].sort((a, b) => a - b);
-  for (let pass = 0; pass < 4; pass++) {
-    const downward = pass % 2 === 0;
-    for (const d of downward ? depths : [...depths].reverse()) {
-      const layer = layers.get(d) ?? [];
-      const barycenter = (node: GraphNode) => {
-        const neighbours = downward ? node.parents : node.children;
-        if (neighbours.length === 0) return index.get(node.id) ?? 0;
-        return neighbours.reduce((sum, id) => sum + (index.get(id) ?? 0), 0) / neighbours.length;
-      };
-      const before = new Map(layer.map((node) => [node.id, index.get(node.id) ?? 0]));
-      layer.sort((a, b) => barycenter(a) - barycenter(b) || (before.get(a.id) ?? 0) - (before.get(b.id) ?? 0));
-      layer.forEach((node, i) => index.set(node.id, i));
-    }
-  }
-
-  // Top coordinate per node: pull each node toward its parents' center, then push
-  // down to clear the previous node in the layer.
-  const top = new Map<string, number>();
-  let cursor = 0;
-  for (const node of layers.get(depths[0]) ?? []) {
-    top.set(node.id, cursor);
-    cursor += heightOf(node) + ROW_GAP;
-  }
-  for (const d of depths.slice(1)) {
-    const layer = layers.get(d) ?? [];
-    const desired = new Map<string, number>();
-    cursor = Number.NEGATIVE_INFINITY;
-    for (const node of layer) {
-      const placedParents = node.parents.filter((id) => top.has(id));
-      const want = placedParents.length
-        ? placedParents.reduce((sum, id) => {
-            const parent = graph.get(id)!;
-            return sum + (top.get(id) ?? 0) + heightOf(parent) / 2;
-          }, 0) /
-            placedParents.length -
-          heightOf(node) / 2
-        : cursor;
-      const y = Math.max(want, cursor);
-      desired.set(node.id, want);
-      top.set(node.id, y);
-      cursor = y + heightOf(node) + ROW_GAP;
-    }
-    // Greedy stacking drifts downward when the first node sits high; nudge the
-    // whole layer by the median offset so its nodes straddle their parents.
-    if (layer.length > 1) {
-      const offsets = layer.map((node) => (desired.get(node.id) ?? 0) - (top.get(node.id) ?? 0)).sort((a, b) => a - b);
-      const shift = offsets[Math.floor(offsets.length / 2)];
-      for (const node of layer) top.set(node.id, (top.get(node.id) ?? 0) + shift);
-    }
-  }
-
-  // Upward pass: parents drift toward their children's center so edges stay short
-  // and don't cross their neighbours. Deepest layer keeps the anchor.
-  for (const d of [...depths].reverse().slice(1)) {
-    const layer = layers.get(d) ?? [];
-    if (layer.length === 0) continue;
-    cursor = Number.NEGATIVE_INFINITY;
-    for (const node of layer) {
-      const placedChildren = node.children.filter((id) => top.has(id));
-      const want = placedChildren.length
-        ? placedChildren.reduce((sum, id) => sum + centerOf(graph.get(id)!), 0) / placedChildren.length -
-          heightOf(node) / 2
-        : (top.get(node.id) ?? 0);
-      const y = Math.max(want, cursor);
-      top.set(node.id, y);
-      cursor = y + heightOf(node) + ROW_GAP;
-    }
-  }
-
-  // Leaf layers were positioned from stale parent anchors; re-center the leaves
-  // that have no children of their own on their (now aligned) parents.
-  for (const d of depths.slice(1)) {
-    const layer = layers.get(d) ?? [];
-    cursor = Number.NEGATIVE_INFINITY;
-    for (const node of layer) {
-      const placedChildren = node.children.filter((id) => top.has(id));
-      const placedParents = node.parents.filter((id) => top.has(id));
-      const want =
-        placedChildren.length === 0 && placedParents.length > 0
-          ? placedParents.reduce((sum, id) => sum + centerOf(graph.get(id)!), 0) / placedParents.length -
-            heightOf(node) / 2
-          : (top.get(node.id) ?? 0);
-      const y = Math.max(want, cursor);
-      top.set(node.id, y);
-      cursor = y + heightOf(node) + ROW_GAP;
-    }
-  }
-
-  const minTop = Math.min(...top.values(), 0);
-  const xOf = (node: GraphNode) => node.depth * (NODE_WIDTH + COLUMN_GAP);
-
-  const nodes: TaskFlowNode[] = [];
-  const edges: Edge[] = [];
-  for (const node of graph.values()) {
-    const position = { x: xOf(node), y: (top.get(node.id) ?? 0) - minTop };
-    if (!node.card) {
-      nodes.push({ id: node.id, type: "dummy", position, data: {} } as unknown as TaskFlowNode);
-    } else {
-      nodes.push({
-        id: node.id,
-        type: "task",
-        position,
-        data: {
-          card: node.card,
-          cardById,
-          tagById,
-          finishedColumnId,
-          status: statusOf(node.card.column),
-          hasUpstream: node.parents.length > 0,
-          hasDownstream: node.children.length > 0,
-          onMeasure,
-        },
-      });
-    }
-    for (const childId of node.children) {
-      const child = graph.get(childId)!;
-      edges.push({
-        id: `e:${node.id}>${childId}`,
-        source: node.id,
-        target: childId,
-        type: "smoothstep",
-        // Arrow only where the edge really lands on a card, not on a routing dummy.
-        markerEnd: child.card ? { type: MarkerType.ArrowClosed, width: 14, height: 14 } : undefined,
-      });
-    }
-  }
-  return { nodes, edges };
 }
 
-/** Keep the graph in view after heights land and node positions shift. */
-function FitViewOnLayout({ version }: { version: number }) {
+function edgePoints(edge: ElkExtendedEdge): ElkPoint[] {
+  const points: ElkPoint[] = [];
+  for (const section of edge.sections ?? []) {
+    if (points.length === 0) points.push(section.startPoint);
+    points.push(...(section.bendPoints ?? []), section.endPoint);
+  }
+  return points;
+}
+
+type TrunkEdgeData = { points?: ElkPoint[] };
+
+/** Rounds ELK's right-angle bends, the way React Flow's smoothstep edges do. */
+function roundedPath(points: ElkPoint[], radius = 8): string {
+  const at = (point: ElkPoint) => `${point.x} ${point.y}`;
+  if (points.length < 3) return `M ${at(points[0])} L ${at(points[points.length - 1])}`;
+  let path = `M ${at(points[0])}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const [previous, corner, next] = [points[i - 1], points[i], points[i + 1]];
+    const inLength = Math.hypot(corner.x - previous.x, corner.y - previous.y);
+    const outLength = Math.hypot(next.x - corner.x, next.y - corner.y);
+    const turn = Math.min(radius, inLength / 2, outLength / 2);
+    if (turn < 0.5) {
+      path += ` L ${at(corner)}`;
+      continue;
+    }
+    const start = {
+      x: corner.x - ((corner.x - previous.x) / inLength) * turn,
+      y: corner.y - ((corner.y - previous.y) / inLength) * turn,
+    };
+    const end = {
+      x: corner.x + ((next.x - corner.x) / outLength) * turn,
+      y: corner.y + ((next.y - corner.y) / outLength) * turn,
+    };
+    path += ` L ${at(start)} Q ${at(corner)} ${at(end)}`;
+  }
+  return `${path} L ${at(points[points.length - 1])}`;
+}
+
+/** Draws ELK's routed polyline instead of letting React Flow guess a path. */
+function TrunkEdge({ data, markerEnd, style, sourceX, sourceY, targetX, targetY }: EdgeProps<Edge<TrunkEdgeData>>) {
+  const points = data?.points;
+  const path = points?.length
+    ? roundedPath(points)
+    : `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`;
+  return <BaseEdge path={path} markerEnd={markerEnd} style={{ strokeLinejoin: "round", ...style }} />;
+}
+
+const edgeTypes = { trunk: TrunkEdge };
+
+/** Keep the graph in view after heights land, the selection changes, or node
+ * positions shift. */
+function FitViewOnLayout({ nodes }: { nodes: TaskFlowNode[] }) {
   const { fitView } = useReactFlow();
   useEffect(() => {
+    if (nodes.length === 0) return;
     // React Flow measures nodes after commit; fit once that frame has settled.
     const timer = setTimeout(() => fitView({ padding: 0.15 }), 60);
     return () => clearTimeout(timer);
-  }, [version, fitView]);
+  }, [nodes, fitView]);
   return null;
 }
 
@@ -383,10 +239,6 @@ function Lineage({ boardId }: { boardId: number }) {
     else next.add(id);
     setPicked(next);
   };
-  const statusOf = (column: string) => {
-    const index = board?.columns.findIndex((c) => c.id === column) ?? 0;
-    return { label: columnTitle(column), className: softAccentBadge(Math.max(index, 0)) };
-  };
   // Measured card heights; layout reads them so tall cards never overlap.
   const heights = useRef(new Map<number, number>());
   const [heightVersion, setHeightVersion] = useState(0);
@@ -396,12 +248,66 @@ function Lineage({ boardId }: { boardId: number }) {
     setHeightVersion((v) => v + 1);
   }, []);
 
-  const layout = useMemo(
-    () => layoutGraph(allCards, selected, cardById, tagById, finishedColumnId, statusOf, heights.current, onMeasure),
+  const [layout, setLayout] = useState<{ nodes: TaskFlowNode[]; edges: Edge[] }>({ nodes: [], edges: [] });
+
+  const graph = useMemo(
+    () => buildElkGraph(allCards, selected, heights.current),
     // heightVersion invalidates the memo when a card reports a new size
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [allCards, selected, cardById, tagById, finishedColumnId, board, heightVersion, onMeasure],
+    [allCards, selected, heightVersion],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    const columns = board?.columns ?? [];
+    getElk()
+      .then((elk) => elk.layout(graph))
+      .then((result) => {
+        if (cancelled) return;
+        const sources = new Set((graph.edges ?? []).map((edge) => edge.sources[0]));
+        const targets = new Set((graph.edges ?? []).map((edge) => edge.targets[0]));
+        const nodes: TaskFlowNode[] = [];
+        for (const node of result.children ?? []) {
+          const card = cardById.get(Number(node.id));
+          if (!card) continue;
+          const index = Math.max(
+            columns.findIndex((column) => column.id === card.column),
+            0,
+          );
+          nodes.push({
+            id: node.id,
+            type: "task",
+            position: { x: node.x ?? 0, y: node.y ?? 0 },
+            data: {
+              card,
+              cardById,
+              tagById,
+              finishedColumnId,
+              status: { label: columns[index]?.title ?? card.column, className: softAccentBadge(index) },
+              hasUpstream: targets.has(node.id),
+              hasDownstream: sources.has(node.id),
+              onMeasure,
+            },
+          });
+        }
+        const edges: Edge[] = (result.edges ?? []).map((edge) => ({
+          id: edge.id ?? `${edge.sources[0]}>${edge.targets[0]}`,
+          source: edge.sources[0],
+          target: edge.targets[0],
+          type: "trunk",
+          data: { points: edgePoints(edge) },
+          markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
+          style: { strokeWidth: 1.25 },
+        }));
+        setLayout({ nodes, edges });
+      })
+      .catch(() => {
+        if (!cancelled) setLayout({ nodes: [], edges: [] });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [graph, cardById, tagById, finishedColumnId, board, onMeasure]);
 
   if (!board) return null;
 
@@ -421,9 +327,16 @@ function Lineage({ boardId }: { boardId: number }) {
       </BoardHeaderSlot>
       <div className="size-full rounded border">
         <ReactFlowProvider>
-          <ReactFlow nodes={layout.nodes} edges={layout.edges} nodeTypes={nodeTypes} nodesConnectable={false} fitView>
+          <ReactFlow
+            nodes={layout.nodes}
+            edges={layout.edges}
+            nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
+            nodesConnectable={false}
+            minZoom={0.02}
+          >
             <Background />
-            <FitViewOnLayout version={heightVersion} />
+            <FitViewOnLayout nodes={layout.nodes} />
           </ReactFlow>
         </ReactFlowProvider>
       </div>
