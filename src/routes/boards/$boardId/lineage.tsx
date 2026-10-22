@@ -152,19 +152,36 @@ function Lineage({ boardId }: { boardId: number }) {
     return new Set(allCards.filter((c) => !archived.has(c.id)).map((c) => c.id));
   }, [board, allCards]);
 
-  const selected = picked ?? defaultSelection;
-
-  const toggle = (id: number) => {
-    const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setPicked(next);
-  };
+  const explicit = picked ?? defaultSelection;
 
   const columnTitle = (id: string) => board?.columns.find((c) => c.id === id)?.title ?? id;
   const cardById = useMemo(() => new Map(allCards.map((c) => [c.id, c])), [allCards]);
   const tagById = useMemo(() => new Map((tags ?? []).map((t) => [t.id!, t])), [tags]);
   const finishedColumnId = board?.columns[board.columns.length - 1]?.id ?? "done";
+
+  // Shown = explicit picks + every unfinished upstream they depend on, transitively.
+  // Finished upstreams stay hidden unless picked, so past work doesn't creep back in.
+  const selected = useMemo(() => {
+    const shown = new Set(explicit);
+    const queue = [...explicit];
+    while (queue.length > 0) {
+      const card = cardById.get(queue.pop()!);
+      for (const id of card?.upstreamIds ?? []) {
+        const upstream = cardById.get(id);
+        if (!upstream || shown.has(id) || upstream.column === finishedColumnId) continue;
+        shown.add(id);
+        queue.push(id);
+      }
+    }
+    return shown;
+  }, [explicit, cardById, finishedColumnId]);
+
+  const toggle = (id: number) => {
+    const next = new Set(explicit);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setPicked(next);
+  };
   const statusOf = (column: string) => {
     const index = board?.columns.findIndex((c) => c.id === column) ?? 0;
     return { label: columnTitle(column), className: softAccentBadge(Math.max(index, 0)) };
@@ -197,7 +214,8 @@ function Lineage({ boardId }: { boardId: number }) {
       <BoardHeaderSlot>
         <TaskSelector
           cards={allCards}
-          selected={selected}
+          selected={explicit}
+          shownCount={selected.size}
           onToggle={toggle}
           onClear={() => setPicked(new Set())}
           onSelectAll={() => setPicked(new Set(allCards.map((c) => c.id)))}
@@ -224,6 +242,7 @@ function Lineage({ boardId }: { boardId: number }) {
 function TaskSelector({
   cards,
   selected,
+  shownCount,
   onToggle,
   onClear,
   onSelectAll,
@@ -231,7 +250,9 @@ function TaskSelector({
   columnTitle,
 }: {
   cards: Card[];
+  /** Explicit picks — drives the row dots. `shownCount` includes auto-added upstreams. */
   selected: Set<number>;
+  shownCount: number;
   onToggle: (id: number) => void;
   onClear: () => void;
   onSelectAll: () => void;
@@ -247,7 +268,7 @@ function TaskSelector({
       <PopoverTrigger asChild>
         <Button variant="outline" size="sm" className="w-56 justify-between">
           <span>
-            {selected.size} of {cards.length} tasks
+            {shownCount} of {cards.length} tasks
           </span>
           <ChevronsUpDownIcon className="text-muted-foreground size-4" />
         </Button>
