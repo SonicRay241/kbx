@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { ArchiveIcon, ColumnsSettingsIcon, GripVerticalIcon, PlusIcon } from 'lucide-react'
 import { BoardCard } from '@/components/board-card'
 import { UpstreamDialog } from '@/components/upstream-dialog'
+import { useShortcut } from '@/lib/shortcuts'
 import { ColumnsDialog } from '@/components/columns-dialog'
 import { ArchiveDialog } from '@/components/archive-dialog'
 import { Switch } from '@/components/ui/switch'
@@ -176,7 +177,9 @@ export function Board({ boardId }: { boardId: number }) {
 
   const blockedByUpstream = (id: number) => blockedIds.has(id)
 
-  function handleAddCard(column: string) {
+  /** Creates the card, then resolves with its real id (used by the shortcut's
+   * edit-modal hand-off; the optimistic temp id only lives inside this call). */
+  async function addCard(column: string): Promise<number> {
     // negative ids never collide with Dexie's auto-increment — the temp id only
     // needs to survive until the write resolves and the true row replaces it.
     const tempId = -Date.now()
@@ -198,10 +201,20 @@ export function Board({ boardId }: { boardId: number }) {
     }
     setCards(cs => [card, ...cs])
     const { id: _tmp, uid: _uid, completedAt: _completedAt, ...row } = card
-    void createCard(row).then(signed => {
-      setCards(cs => cs.map(c => (c.id === card.id ? { ...c, id: signed.id!, uid: signed.uid } : c)))
-    })
+    const signed = await createCard(row)
+    setCards(cs => cs.map(c => (c.id === card.id ? { ...c, id: signed.id!, uid: signed.uid } : c)))
+    return signed.id!
   }
+
+  function handleAddCard(column: string) {
+    void addCard(column)
+  }
+
+  // New card in the first column, straight into the edit modal.
+  useShortcut('new-card', () => {
+    if (dialogCardId !== null || columnsOpen || archiveOpen) return
+    void addCard(columns[0].id).then(setDialogCardId)
+  })
 
   const restoreDragStart = () => {
     if (dragStartSnapshot.current) {

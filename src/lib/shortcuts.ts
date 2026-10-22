@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useRouterState } from "@tanstack/react-router";
 
-export type ShortcutAction = "toggle-search-modal" | "toggle-sidebar" | "focus-searchbar";
+export type ShortcutAction =
+  | "toggle-search-modal"
+  | "toggle-sidebar"
+  | "focus-searchbar"
+  | "new-card";
 
 type Binding = { route: string; keys: string[] };
 
@@ -16,6 +20,7 @@ export const SHORTCUTS: Record<ShortcutAction, Binding[]> = {
   "toggle-search-modal": [{ route: "/*", keys: ["mod+k"] }],
   "toggle-sidebar": [{ route: "/*", keys: ["mod+b"] }],
   "focus-searchbar": [{ route: "/boards/$boardId/list", keys: ["/"] }],
+  "new-card": [{ route: "/boards/$boardId", keys: ["mod+n"] }],
 };
 
 function matchScore(pattern: string, pathname: string): number {
