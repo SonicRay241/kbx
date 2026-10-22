@@ -90,7 +90,7 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-5/6 min-h-5/6 min-w-5/6 max-w-3xl flex-col gap-0 p-4 sm:max-w-3xl">
+      <DialogContent className="flex max-h-5/6 min-h-5/6 w-full max-w-[min(calc(5/6*100%),var(--container-3xl))] flex-col gap-0 p-4 sm:max-w-[min(calc(5/6*100%),var(--container-3xl))]">
         <DialogHeader className="gap-2 border-b pb-4">
           <Input
             value={card.title}
