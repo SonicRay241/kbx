@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { SyncPanel } from "@/components/sync/sync-panel";
+import { ThemeToggle } from "@/components/theme-toggle";
 import {
   Dialog,
   DialogContent,
@@ -278,7 +279,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             </SidebarGroup>
           </SidebarContent>
           <SidebarFooter className="pt-0">
-            <SyncPanel />
+            <div className="flex items-center gap-1">
+              <div className="min-w-0 flex-1">
+                <SyncPanel />
+              </div>
+              <ThemeToggle />
+            </div>
           </SidebarFooter>
         </Sidebar>
         <SidebarInset className="relative min-h-dvh">
