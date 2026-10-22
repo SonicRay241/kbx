@@ -94,9 +94,9 @@ export function Dashboard() {
   return (
     <div className="grid h-full min-h-0 w-full gap-4 px-4 pt-4">
       <div className="flex min-h-0 flex-col gap-4 pb-4">
-        <h1 className="text-xl font-medium">Tasks overview</h1>
+        <h1 className="text-xl font-medium pl-8 md:pl-0">Tasks overview</h1>
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 w-full">
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 w-full">
           <div className="col-span-2">
             <div className="grid grid-cols-2 gap-4">
               <StatCard icon={<SquarePlayIcon className="size-5" />} label="Ongoing tasks" value={stats.ongoing} />
@@ -186,7 +186,7 @@ function ProjectCard({ entry }: { entry: BoardStats }) {
     <Link
       to="/boards/$boardId"
       params={{ boardId: String(board.id) }}
-      className="ring-foreground/10 bg-card hover:bg-sidebar-accent flex flex-col gap-3 rounded-xl p-5 ring-1 transition-colors"
+      className="ring-foreground/10 bg-card col-span-2 sm:col-span-1 hover:bg-sidebar-accent flex flex-col gap-3 rounded-xl p-5 ring-1 transition-colors"
     >
       <div className="flex min-w-0 items-center gap-2">
         <span className={`size-2 shrink-0 rounded-full ${accent}`} />

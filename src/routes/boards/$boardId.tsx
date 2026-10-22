@@ -61,7 +61,7 @@ function BoardRoute() {
     <BoardHeaderSlotContext.Provider value={headerSlot}>
       <div className="h-full w-full pt-4 flex flex-col">
         <div className="px-4 space-y-4 pb-4">
-          <h1 className="text-xl font-medium">{board.name}</h1>
+          <h1 className="text-xl font-medium pl-8 md:pl-0">{board.name}</h1>
           <div className="flex">
             <div className="bg-muted shadow-inner isolate flex rounded-md border h-7">
               {/* One pill, re-anchored to the active tab. The anchor-name lives on each link. */}

@@ -3,7 +3,11 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 
 import { db, DEFAULT_COLUMNS } from "@/lib/db";
-import { createBoard as createBoardRow, renameBoard as renameBoardRow, deleteBoard as deleteBoardRow } from "@/lib/mutations";
+import {
+  createBoard as createBoardRow,
+  renameBoard as renameBoardRow,
+  deleteBoard as deleteBoardRow,
+} from "@/lib/mutations";
 import {
   Sidebar,
   SidebarContent,
@@ -127,15 +131,14 @@ export function AppShell({ children }: { children: ReactNode }) {
   const createBoard = () => {
     const name = newName.trim();
     if (!name) return;
-    void createBoardRow(name, DEFAULT_COLUMNS)
-      .then((id) => {
-        setNewName("");
-        setCreateOpen(false);
-        void navigate({
-          to: "/boards/$boardId",
-          params: { boardId: String(id) },
-        });
+    void createBoardRow(name, DEFAULT_COLUMNS).then((id) => {
+      setNewName("");
+      setCreateOpen(false);
+      void navigate({
+        to: "/boards/$boardId",
+        params: { boardId: String(id) },
       });
+    });
   };
 
   const openCreateBoard = () => {
@@ -152,13 +155,16 @@ export function AppShell({ children }: { children: ReactNode }) {
               <SidebarMenuItem>
                 <SidebarMenuButton className="p-0.5 group-data-[collapsible=icon]:p-0.5!">
                   <div className="relative px-0.5 flex w-full gap-4 [&_svg]:size-3.5">
-                    <Link to="/" className="flex h-8 shrink-0 items-center gap-2 py-2 overflow-hidden rounded-md text-sm outline-hidden sidebar-menu-button hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent">
+                    <Link
+                      to="/"
+                      className="flex h-8 shrink-0 items-center gap-2 py-2 overflow-hidden rounded-md text-sm outline-hidden sidebar-menu-button hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring active:bg-sidebar-accent"
+                    >
                       <div className="flex aspect-square size-6 items-center justify-center rounded-sm bg-blue-600 text-white">
                         <LayersPlusIcon strokeWidth={2.5} />
                       </div>
                       <span className="font-medium">Kbx</span>
                     </Link>
-                  <SidebarTrigger className="p-1 absolute right-0 top-0.5 z-10 hover:opacity-100 group-data-[collapsible=icon]:opacity-0"/>
+                    <SidebarTrigger className="p-1 absolute right-0 top-0.5 z-10 hover:opacity-100 group-data-[collapsible=icon]:opacity-0" />
                   </div>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -275,7 +281,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             <SyncPanel />
           </SidebarFooter>
         </Sidebar>
-        <SidebarInset className="min-h-dvh">
+        <SidebarInset className="relative min-h-dvh">
+          <header className="absolute top-4 left-4 md:hidden">
+            <SidebarTrigger/>
+          </header>
           {children}
         </SidebarInset>
 
