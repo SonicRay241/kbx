@@ -63,11 +63,14 @@ export function Dashboard() {
           card,
           board,
           state: columnTitle(board, card.column),
+          rank: columnIndex(board, card.column),
           badge: softAccentBadge(columnIndex(board, card.column)),
         };
       })
       .filter((row) => row !== null)
-      .sort((a, b) => b.card.createdAt - a.card.createdAt);
+      // Closest to done first: a later column is nearer the finished column, so
+      // "in review" outranks "todo". Newest breaks ties.
+      .sort((a, b) => b.rank - a.rank || b.card.createdAt - a.card.createdAt);
 
     return {
       perBoard,
