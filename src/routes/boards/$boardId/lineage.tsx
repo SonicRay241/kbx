@@ -36,7 +36,7 @@ type TaskNodeData = {
 };
 type TaskFlowNode = Node<TaskNodeData, "task">;
 
-function TaskNode({ id, data }: NodeProps<TaskFlowNode>) {
+function TaskNode({ data }: NodeProps<TaskFlowNode>) {
   const ref = useRef<HTMLDivElement>(null);
   const { onMeasure } = data;
 
@@ -45,12 +45,12 @@ function TaskNode({ id, data }: NodeProps<TaskFlowNode>) {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const report = () => onMeasure(Number(id), el.offsetHeight);
+    const report = () => onMeasure(data.card.id, el.offsetHeight);
     report();
     const observer = new ResizeObserver(report);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [id, onMeasure]);
+  }, [data.card.id, onMeasure]);
 
   return (
     <div ref={ref} className="relative w-56">
@@ -71,7 +71,17 @@ function TaskNode({ id, data }: NodeProps<TaskFlowNode>) {
   );
 }
 
-const nodeTypes = { task: TaskNode };
+/** Zero-size waypoint: keeps long edges inside the gaps between columns. */
+function DummyNode() {
+  return (
+    <div className="relative size-0">
+      <Handle type="target" position={Position.Left} className="opacity-0!" />
+      <Handle type="source" position={Position.Right} className="opacity-0!" />
+    </div>
+  );
+}
+
+const nodeTypes = { task: TaskNode, dummy: DummyNode };
 
 const NODE_WIDTH = 224;
 const COLUMN_GAP = 96;
@@ -79,14 +89,26 @@ const ROW_GAP = 20;
 const ESTIMATED_HEIGHT = 120;
 
 /**
- * Layered DAG layout: depth = longest upstream chain, so upstream cards sit left of
- * the cards that depend on them. Within a layer, nodes are ordered by their parents'
- * vertical center (barycenter sweeps), which keeps siblings of the same downstream
- * card adjacent instead of scattering them. Heights come from the rendered cards, so
- * tall cards (long titles, many tags) never overlap.
+ * Layered DAG layout. Depth = longest upstream chain, so upstream cards sit left
+ * of the cards that depend on them. Edges that skip layers are split with
+ * zero-size dummy nodes in every intermediate column: React Flow then routes each
+ * segment inside the gap between two columns instead of cutting across the cards
+ * of a column it flies over.
+ * Within a layer, nodes are ordered by their neighbours' vertical center
+ * (barycenter sweeps), which keeps siblings of the same downstream card adjacent.
+ * Heights come from the rendered cards, so tall cards never overlap.
  * Relaxation is bounded by node count, so an accidental cycle (impossible via the
  * upstream picker) cannot hang.
  */
+type GraphNode = {
+  /** `n:<cardId>` for cards, `d:<up>-><down>:<depth>` for routing dummies. */
+  id: string;
+  card: Card | null;
+  depth: number;
+  parents: string[];
+  children: string[];
+};
+
 function layoutGraph(
   cards: Card[],
   selected: Set<number>,
@@ -96,15 +118,15 @@ function layoutGraph(
   statusOf: (column: string) => { label: string; className: string },
   heights: Map<number, number>,
   onMeasure: (id: number, height: number) => void,
-): TaskFlowNode[] {
+): { nodes: TaskFlowNode[]; edges: Edge[] } {
   const included = cards.filter((c) => selected.has(c.id));
   const byId = new Map(included.map((c) => [c.id, c]));
   const parents = new Map<number, number[]>();
-  const children = new Map<number, number[]>();
   for (const card of included) {
-    const upstreams = card.upstreamIds.filter((id) => byId.has(id));
-    parents.set(card.id, upstreams);
-    for (const id of upstreams) children.set(id, [...(children.get(id) ?? []), card.id]);
+    parents.set(
+      card.id,
+      card.upstreamIds.filter((id) => byId.has(id)),
+    );
   }
 
   const depth = new Map<number, number>(included.map((c) => [c.id, 0]));
@@ -122,66 +144,104 @@ function layoutGraph(
     if (!changed) break;
   }
 
-  const layers = new Map<number, Card[]>();
+  const graph = new Map<string, GraphNode>();
+  const cardNodeId = (id: number) => `n:${id}`;
   for (const card of included) {
-    const d = depth.get(card.id) ?? 0;
-    const layer = layers.get(d) ?? [];
-    layer.push(card);
-    layers.set(d, layer);
+    graph.set(cardNodeId(card.id), {
+      id: cardNodeId(card.id),
+      card,
+      depth: depth.get(card.id) ?? 0,
+      parents: [],
+      children: [],
+    });
   }
-  for (const layer of layers.values()) layer.sort((a, b) => a.createdAt - b.createdAt);
+  const link = (from: string, to: string) => {
+    graph.get(from)!.children.push(to);
+    graph.get(to)!.parents.push(from);
+  };
+  for (const card of included) {
+    for (const up of parents.get(card.id) ?? []) {
+      const from = cardNodeId(up);
+      const to = cardNodeId(card.id);
+      const fromDepth = graph.get(from)!.depth;
+      const toDepth = graph.get(to)!.depth;
+      let previous = from;
+      for (let d = fromDepth + 1; d < toDepth; d++) {
+        const dummyId = `d:${up}->${card.id}:${d}`;
+        graph.set(dummyId, { id: dummyId, card: null, depth: d, parents: [], children: [] });
+        link(previous, dummyId);
+        previous = dummyId;
+      }
+      link(previous, to);
+    }
+  }
 
-  const heightOf = (id: number) => heights.get(id) ?? ESTIMATED_HEIGHT;
+  const layers = new Map<number, GraphNode[]>();
+  for (const node of graph.values()) {
+    const layer = layers.get(node.depth) ?? [];
+    layer.push(node);
+    layers.set(node.depth, layer);
+  }
+  for (const layer of layers.values()) {
+    layer.sort((a, b) => (a.card?.createdAt ?? 0) - (b.card?.createdAt ?? 0));
+  }
+
+  const heightOf = (node: GraphNode) => (node.card ? (heights.get(node.card.id) ?? ESTIMATED_HEIGHT) : 0);
+  const centerOf = (node: GraphNode) => (top.get(node.id) ?? 0) + heightOf(node) / 2;
 
   // Order each layer by neighbour position; alternating direction reduces crossings.
-  const index = new Map<number, number>();
-  const reindex = () => layers.forEach((layer) => layer.forEach((card, i) => index.set(card.id, i)));
+  const index = new Map<string, number>();
+  const reindex = () => layers.forEach((layer) => layer.forEach((node, i) => index.set(node.id, i)));
   reindex();
   const depths = [...layers.keys()].sort((a, b) => a - b);
   for (let pass = 0; pass < 4; pass++) {
     const downward = pass % 2 === 0;
     for (const d of downward ? depths : [...depths].reverse()) {
       const layer = layers.get(d) ?? [];
-      const barycenter = (card: Card) => {
-        const neighbours = downward ? (parents.get(card.id) ?? []) : (children.get(card.id) ?? []);
-        if (neighbours.length === 0) return index.get(card.id) ?? 0;
+      const barycenter = (node: GraphNode) => {
+        const neighbours = downward ? node.parents : node.children;
+        if (neighbours.length === 0) return index.get(node.id) ?? 0;
         return neighbours.reduce((sum, id) => sum + (index.get(id) ?? 0), 0) / neighbours.length;
       };
-      const before = new Map(layer.map((card) => [card.id, index.get(card.id) ?? 0]));
+      const before = new Map(layer.map((node) => [node.id, index.get(node.id) ?? 0]));
       layer.sort((a, b) => barycenter(a) - barycenter(b) || (before.get(a.id) ?? 0) - (before.get(b.id) ?? 0));
-      layer.forEach((card, i) => index.set(card.id, i));
+      layer.forEach((node, i) => index.set(node.id, i));
     }
   }
 
-  // Top coordinate per card: pull each card toward its parents' center, then push
-  // down to clear the previous card in the layer.
-  const top = new Map<number, number>();
+  // Top coordinate per node: pull each node toward its parents' center, then push
+  // down to clear the previous node in the layer.
+  const top = new Map<string, number>();
   let cursor = 0;
-  for (const card of layers.get(depths[0]) ?? []) {
-    top.set(card.id, cursor);
-    cursor += heightOf(card.id) + ROW_GAP;
+  for (const node of layers.get(depths[0]) ?? []) {
+    top.set(node.id, cursor);
+    cursor += heightOf(node) + ROW_GAP;
   }
   for (const d of depths.slice(1)) {
     const layer = layers.get(d) ?? [];
-    const desired = new Map<number, number>();
+    const desired = new Map<string, number>();
     cursor = Number.NEGATIVE_INFINITY;
-    for (const card of layer) {
-      const placedParents = (parents.get(card.id) ?? []).filter((id) => top.has(id));
+    for (const node of layer) {
+      const placedParents = node.parents.filter((id) => top.has(id));
       const want = placedParents.length
-        ? placedParents.reduce((sum, id) => sum + top.get(id)! + heightOf(id) / 2, 0) / placedParents.length -
-          heightOf(card.id) / 2
+        ? placedParents.reduce((sum, id) => {
+            const parent = graph.get(id)!;
+            return sum + (top.get(id) ?? 0) + heightOf(parent) / 2;
+          }, 0) /
+            placedParents.length -
+          heightOf(node) / 2
         : cursor;
       const y = Math.max(want, cursor);
-      desired.set(card.id, want);
-      top.set(card.id, y);
-      cursor = y + heightOf(card.id) + ROW_GAP;
+      desired.set(node.id, want);
+      top.set(node.id, y);
+      cursor = y + heightOf(node) + ROW_GAP;
     }
-    // Greedy stacking drifts downward when the first card sits high; nudge the whole
-    // layer by the median offset so its cards straddle their parents instead.
+    // Greedy stacking drifts downward when the first node sits high; nudge the
+    // whole layer by the median offset so its nodes straddle their parents.
     if (layer.length > 1) {
-      const offsets = layer.map((card) => desired.get(card.id)! - top.get(card.id)!).sort((a, b) => a - b);
+      const offsets = layer.map((node) => (desired.get(node.id) ?? 0) - (top.get(node.id) ?? 0)).sort((a, b) => a - b);
       const shift = offsets[Math.floor(offsets.length / 2)];
-      for (const card of layer) top.set(card.id, top.get(card.id)! + shift);
+      for (const node of layer) top.set(node.id, (top.get(node.id) ?? 0) + shift);
     }
   }
 
@@ -191,15 +251,15 @@ function layoutGraph(
     const layer = layers.get(d) ?? [];
     if (layer.length === 0) continue;
     cursor = Number.NEGATIVE_INFINITY;
-    for (const card of layer) {
-      const placedChildren = (children.get(card.id) ?? []).filter((id) => top.has(id));
+    for (const node of layer) {
+      const placedChildren = node.children.filter((id) => top.has(id));
       const want = placedChildren.length
-        ? placedChildren.reduce((sum, id) => sum + top.get(id)! + heightOf(id) / 2, 0) / placedChildren.length -
-          heightOf(card.id) / 2
-        : top.get(card.id)!;
+        ? placedChildren.reduce((sum, id) => sum + centerOf(graph.get(id)!), 0) / placedChildren.length -
+          heightOf(node) / 2
+        : (top.get(node.id) ?? 0);
       const y = Math.max(want, cursor);
-      top.set(card.id, y);
-      cursor = y + heightOf(card.id) + ROW_GAP;
+      top.set(node.id, y);
+      cursor = y + heightOf(node) + ROW_GAP;
     }
   }
 
@@ -208,46 +268,59 @@ function layoutGraph(
   for (const d of depths.slice(1)) {
     const layer = layers.get(d) ?? [];
     cursor = Number.NEGATIVE_INFINITY;
-    for (const card of layer) {
-      const placedChildren = (children.get(card.id) ?? []).filter((id) => top.has(id));
-      const placedParents = (parents.get(card.id) ?? []).filter((id) => top.has(id));
+    for (const node of layer) {
+      const placedChildren = node.children.filter((id) => top.has(id));
+      const placedParents = node.parents.filter((id) => top.has(id));
       const want =
         placedChildren.length === 0 && placedParents.length > 0
-          ? placedParents.reduce((sum, id) => sum + top.get(id)! + heightOf(id) / 2, 0) / placedParents.length -
-            heightOf(card.id) / 2
-          : top.get(card.id)!;
+          ? placedParents.reduce((sum, id) => sum + centerOf(graph.get(id)!), 0) / placedParents.length -
+            heightOf(node) / 2
+          : (top.get(node.id) ?? 0);
       const y = Math.max(want, cursor);
-      top.set(card.id, y);
-      cursor = y + heightOf(card.id) + ROW_GAP;
+      top.set(node.id, y);
+      cursor = y + heightOf(node) + ROW_GAP;
     }
   }
 
   const minTop = Math.min(...top.values(), 0);
+  const xOf = (node: GraphNode) => node.depth * (NODE_WIDTH + COLUMN_GAP);
 
   const nodes: TaskFlowNode[] = [];
-  for (const [d, layer] of layers) {
-    for (const card of layer) {
+  const edges: Edge[] = [];
+  for (const node of graph.values()) {
+    const position = { x: xOf(node), y: (top.get(node.id) ?? 0) - minTop };
+    if (!node.card) {
+      nodes.push({ id: node.id, type: "dummy", position, data: {} } as unknown as TaskFlowNode);
+    } else {
       nodes.push({
-        id: String(card.id),
+        id: node.id,
         type: "task",
-        position: {
-          x: d * (NODE_WIDTH + COLUMN_GAP),
-          y: (top.get(card.id) ?? 0) - minTop,
-        },
+        position,
         data: {
-          card,
+          card: node.card,
           cardById,
           tagById,
           finishedColumnId,
-          status: statusOf(card.column),
-          hasUpstream: (parents.get(card.id) ?? []).length > 0,
-          hasDownstream: (children.get(card.id) ?? []).length > 0,
+          status: statusOf(node.card.column),
+          hasUpstream: node.parents.length > 0,
+          hasDownstream: node.children.length > 0,
           onMeasure,
         },
       });
     }
+    for (const childId of node.children) {
+      const child = graph.get(childId)!;
+      edges.push({
+        id: `e:${node.id}>${childId}`,
+        source: node.id,
+        target: childId,
+        type: "smoothstep",
+        // Arrow only where the edge really lands on a card, not on a routing dummy.
+        markerEnd: child.card ? { type: MarkerType.ArrowClosed, width: 14, height: 14 } : undefined,
+      });
+    }
   }
-  return nodes;
+  return { nodes, edges };
 }
 
 /** Keep the graph in view after heights land and node positions shift. */
@@ -323,28 +396,12 @@ function Lineage({ boardId }: { boardId: number }) {
     setHeightVersion((v) => v + 1);
   }, []);
 
-  const nodes = useMemo(
+  const layout = useMemo(
     () => layoutGraph(allCards, selected, cardById, tagById, finishedColumnId, statusOf, heights.current, onMeasure),
     // heightVersion invalidates the memo when a card reports a new size
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [allCards, selected, cardById, tagById, finishedColumnId, board, heightVersion, onMeasure],
   );
-  const edges = useMemo<Edge[]>(() => {
-    const byId = new Map(allCards.map((c) => [c.id, c]));
-    return allCards
-      .filter((c) => selected.has(c.id))
-      .flatMap((card) =>
-        card.upstreamIds
-          .filter((id) => selected.has(id) && byId.has(id))
-          .map((id) => ({
-            id: `${id}-${card.id}`,
-            source: String(id),
-            target: String(card.id),
-            type: "smoothstep",
-            markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14 },
-          })),
-      );
-  }, [allCards, selected]);
 
   if (!board) return null;
 
@@ -364,7 +421,7 @@ function Lineage({ boardId }: { boardId: number }) {
       </BoardHeaderSlot>
       <div className="size-full rounded border">
         <ReactFlowProvider>
-          <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} nodesConnectable={false} fitView>
+          <ReactFlow nodes={layout.nodes} edges={layout.edges} nodeTypes={nodeTypes} nodesConnectable={false} fitView>
             <Background />
             <FitViewOnLayout version={heightVersion} />
           </ReactFlow>
