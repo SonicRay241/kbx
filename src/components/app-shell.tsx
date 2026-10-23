@@ -100,7 +100,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                       </div>
                       <span className="font-medium">kbx.</span>
                     </Link>
-                    <SidebarTrigger className="p-1 absolute right-0 top-0.5 z-10 hover:opacity-100 group-data-[collapsible=icon]:opacity-0" />
+                    <SidebarTrigger className="p-1 absolute right-0 top-0.5 z-10 hover:opacity-100 group-data-[collapsible=icon]:bg-sidebar group-data-[collapsible=icon]:opacity-0" />
                   </div>
                 </SidebarMenuButton>
               </SidebarMenuItem>
@@ -110,10 +110,10 @@ export function AppShell({ children }: { children: ReactNode }) {
             <SidebarGroup>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton className="[&>svg]:size-3.5" asChild>
+                  <SidebarMenuButton className="[&>svg]:size-3.5" asChild tooltip="Home">
                     <Link to="/">
                       <HomeIcon />
-                      <span>Home</span>
+                      <span className="transition-opacity group-data-[collapsible=icon]:opacity-0">Home</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -122,20 +122,24 @@ export function AppShell({ children }: { children: ReactNode }) {
                     className="[&>svg]:size-3.5"
                     onClick={() => setSearchOpen(true)}
                     tooltip={
-                      searchShortcut ? (
-                        <span className="flex items-center gap-1.5">
-                          Search
-                          <Kbd>{searchShortcut}</Kbd>
-                        </span>
-                      ) : (
-                        "Search"
-                      )
+                      searchShortcut
+                        ? {
+                            // SidebarMenuButton spreads a props object into
+                            // TooltipContent; a bare element renders nothing.
+                            children: (
+                              <span className="flex items-center gap-1.5">
+                                Search
+                                <Kbd>{searchShortcut}</Kbd>
+                              </span>
+                            ),
+                          }
+                        : "Search"
                     }
                   >
                     <SearchIcon />
-                    <span>Search</span>
+                    <span className="transition-opacity group-data-[collapsible=icon]:opacity-0">Search</span>
                     {searchShortcut && (
-                      <Kbd className="ml-auto opacity-0 transition-opacity group-hover/menu-button:opacity-100">
+                      <Kbd className="ml-auto opacity-0 transition-opacity group-hover/menu-button:opacity-100 group-data-[collapsible=icon]:hidden">
                         {searchShortcut}
                       </Kbd>
                     )}
