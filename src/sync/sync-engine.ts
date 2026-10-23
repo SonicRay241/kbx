@@ -281,13 +281,31 @@ async function runPool<T>(items: T[], limit: number, task: (item: T) => Promise<
 export async function syncAll(options: { archives?: boolean } = {}): Promise<SyncResult> {
   if (syncing) return { pushed: 0, pulled: 0, deleted: 0 }
   syncing = true
+  const adapter = activeAdapter()
+  const previous = await db.syncMeta.get('index')
+  const startedAt = Date.now()
+  let lastProgress = 0
+  const report = (status: SyncProgress['status'], progress: number, message?: string): void => {
+    lastProgress = progress
+    const event: SyncProgress = {
+      status,
+      progress,
+      startedAt,
+      previousSyncedAt: previous?.lastSyncedAt ? Date.parse(previous.lastSyncedAt) : null,
+      source: adapter.label,
+      message,
+    }
+    for (const listener of syncProgressListeners) listener(event)
+  }
   try {
-    const adapter = activeAdapter()
+    report('running', 0)
 
     const { index, fileId: indexFileId } = await adapter.readIndex()
     const result: SyncResult = { pushed: 0, pulled: 0, deleted: 0 }
     if ((index.version ?? 1) < BUNDLE_VERSION) await migrateLegacyIndex(adapter, index, result)
-    await reconcileBundles(adapter, index, result, options.archives === true)
+    await reconcileBundles(adapter, index, result, options.archives === true, (done, total) =>
+      report('running', total > 0 ? done / total : 0),
+    )
 
     const newIndexFileId = await adapter.writeIndex(index, indexFileId ?? undefined)
     await db.syncMeta.put({
@@ -299,7 +317,11 @@ export async function syncAll(options: { archives?: boolean } = {}): Promise<Syn
     if (result.pushed || result.pulled || result.deleted) {
       for (const listener of syncAppliedListeners) listener(result)
     }
+    report('done', 1)
     return result
+  } catch (error) {
+    report('error', lastProgress, error instanceof Error ? error.message : String(error))
+    throw error
   } finally {
     syncing = false
   }
@@ -785,6 +807,7 @@ async function reconcileBundles(
   index: DriveIndex,
   result: SyncResult,
   pullArchives: boolean,
+  onProgress?: (done: number, total: number) => void,
 ): Promise<void> {
   index.graves ??= {}
   // Local deletes become shared tombstones before anything else is applied.
@@ -834,6 +857,10 @@ async function reconcileBundles(
     }
   })
 
+  // Progress: pulled bundles first, then uploads. Counters are incremented in
+  // the same single-threaded loop/pool that does the work.
+  let done = 0
+  let total = toPull.length
   const pendingRefs = new Map<number, { upstreamIds?: unknown; tagIds?: unknown }>()
   for (const [id, entry] of toPull) {
     const json = bodies.get(id)
@@ -853,26 +880,34 @@ async function reconcileBundles(
       if (!byUid[kind]) continue
       await applyRemoteUnit(index, kind, uid, unit, entry.updatedAt, byUid, pendingRefs, result)
     }
+    done += 1
+    onProgress?.(done, total)
   }
   await healPendingRefs(pendingRefs)
 
   // Push: rebuild from post-pull state so a merge is never masked by a stale hash.
   const bundles = await buildLocalBundles()
+  total = done + bundles.length
   await runPool(bundles, SYNC_CONCURRENCY, async (bundle) => {
-    const entry = index.entries[bundle.id]
-    if (entry && entry.hash === bundle.hash && !entry.deletedAt) return
-    // A partition we have not pulled yet may hold another device's archives;
-    // uploading now would overwrite them. Wait for an explicit archive sync.
-    if (!pullArchives && bundle.kind === 'archive' && entry && !entry.deletedAt) return
-    const fileId = await adapter.uploadFile(bundle.name, bundle.json, entry?.fileId)
-    index.entries[bundle.id] = {
-      id: bundle.id,
-      fileId,
-      hash: bundle.hash,
-      name: bundle.name,
-      updatedAt: Date.now(),
+    try {
+      const entry = index.entries[bundle.id]
+      if (entry && entry.hash === bundle.hash && !entry.deletedAt) return
+      // A partition we have not pulled yet may hold another device's archives;
+      // uploading now would overwrite them. Wait for an explicit archive sync.
+      if (!pullArchives && bundle.kind === 'archive' && entry && !entry.deletedAt) return
+      const fileId = await adapter.uploadFile(bundle.name, bundle.json, entry?.fileId)
+      index.entries[bundle.id] = {
+        id: bundle.id,
+        fileId,
+        hash: bundle.hash,
+        name: bundle.name,
+        updatedAt: Date.now(),
+      }
+      result.pushed += 1
+    } finally {
+      done += 1
+      onProgress?.(done, total)
     }
-    result.pushed += 1
   })
 
   // Bundles we no longer produce: a deleted board, or a partition whose cards
@@ -893,6 +928,29 @@ async function reconcileBundles(
     }
     delete index.entries[id]
     result.deleted += 1
+  }
+}
+
+/** Live progress of a running sync, for the UI's progress toast. */
+export interface SyncProgress {
+  status: 'running' | 'done' | 'error'
+  /** 0..1 */
+  progress: number
+  /** Identifies one run; every event of a run carries the same value. */
+  startedAt: number
+  /** When the previous successful sync finished (null on a first sync). */
+  previousSyncedAt: number | null
+  /** Human label of the backend ("WebDAV", "Google Drive"). */
+  source: string
+  message?: string
+}
+
+const syncProgressListeners = new Set<(progress: SyncProgress) => void>()
+
+export function subscribeSyncProgress(listener: (progress: SyncProgress) => void): () => void {
+  syncProgressListeners.add(listener)
+  return () => {
+    syncProgressListeners.delete(listener)
   }
 }
 
