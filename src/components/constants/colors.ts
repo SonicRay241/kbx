@@ -4,7 +4,7 @@ export const ACCENTS = [
   "bg-green-600 dark:bg-green-400",
   "bg-sky-600 dark:bg-sky-400",
   "bg-violet-600 dark:bg-violet-400",
-  "bg-rose-600 dark:bg-rose-400",
+  "bg-pink-600 dark:bg-pink-400",
 ];
 
 export const SOFT_ACCENTS = [
@@ -13,7 +13,7 @@ export const SOFT_ACCENTS = [
   "bg-green-600/15 dark:bg-green-400/15",
   "bg-sky-600/15 dark:bg-sky-400/15",
   "bg-violet-600/15 dark:bg-violet-400/15",
-  "bg-rose-600/15 dark:bg-rose-400/15",
+  "bg-pink-600/15 dark:bg-pink-400/15",
 ];
 
 export const OUTLINE_ACCENTS = [
@@ -22,7 +22,7 @@ export const OUTLINE_ACCENTS = [
   "border text-green-600 dark:text-green-400 border-green-600 dark:border-green-400",
   "border text-sky-600 dark:text-sky-400 border-sky-600 dark:border-sky-400",
   "border text-violet-600 dark:text-violet-400 border-violet-600 dark:border-violet-400",
-  "border text-rose-600 dark:text-rose-400 border-rose-600 dark:border-rose-400",
+  "border text-pink-600 dark:text-pink-400 border-pink-600 dark:border-pink-400",
 ];
 /** Soft fill + matching outline, keyed by column index (list-page state badge). */
 export function softAccentBadge(index: number) {
@@ -36,7 +36,7 @@ export const TEXT_ACCENTS = [
   "text-green-600 dark:text-green-400",
   "text-sky-600 dark:text-sky-400",
   "text-violet-600 dark:text-violet-400",
-  "text-rose-600 dark:text-rose-400",
+  "text-pink-600 dark:text-pink-400",
 ];
 
 export function accentText(index: number) {
