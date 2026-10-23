@@ -114,23 +114,27 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return cards
-      .map((card) => {
-        const board = boardById.get(card.boardId);
-        if (!board || archivedCardIds(board, cards).has(card.id)) return null;
-        if (
-          q &&
-          !card.title.toLowerCase().includes(q) &&
-          !(card.description ?? "").toLowerCase().includes(q)
-        ) {
-          return null;
-        }
-        return { card, board, status: statusOf(board, card.column) };
-      })
-      .filter((row) => row !== null)
+    const matched = cards.flatMap((card) => {
+      const board = boardById.get(card.boardId);
+      if (!board) return [];
+      if (q && !card.title.toLowerCase().includes(q) && !(card.description ?? "").toLowerCase().includes(q)) {
+        return [];
+      }
+      return [{ card, board, archived: archivedCardIds(board, cards).has(card.id) }];
+    });
+    // Archive is a fallback bucket, not a filter: archived cards only surface
+    // when nothing active matches.
+    const active = matched.filter((row) => !row.archived);
+    const pool = active.length ? active : matched;
+    const finished = (row: (typeof pool)[number]) =>
+      row.card.column === row.board.columns[row.board.columns.length - 1]?.id;
+    return pool
+      .map((row) => ({ ...row, status: statusOf(row.board, row.card.column) }))
       .sort(
         (a, b) =>
-          // Closest to the finished column first, mirroring the dashboard.
+          // Completed work is rarely what you are looking for — sink it.
+          Number(finished(a)) - Number(finished(b)) ||
+          // Otherwise closest to the finished column first, mirroring the dashboard.
           columnIndex(b.board, b.card.column) - columnIndex(a.board, a.card.column) ||
           (b.card.updatedAt ?? b.card.createdAt) - (a.card.updatedAt ?? a.card.createdAt),
       );
