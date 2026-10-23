@@ -17,6 +17,7 @@ import { SearchIcon } from "lucide-react";
 
 import { archivedCardIds, db, type BoardRow, type Card, type Tag } from "@/lib/db";
 import { useLocalShortcut } from "@/lib/shortcuts";
+import { SyncArchivesButton } from "@/components/sync/sync-archives-button";
 import { TaskCard } from "@/components/board-card";
 import { softAccentBadge } from "@/components/constants/colors";
 import { Badge } from "@/components/ui/badge";
@@ -148,6 +149,9 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     setPreviewId(results[0]?.card.id ?? null);
   }, [query, results]);
 
+  // Every match came from the archive bucket — local history may be behind.
+  const archiveFallback = results.length > 0 && results.every((row) => row.archived);
+
   const graph = useMemo(() => {
     const card = previewId === null ? null : cardById.get(previewId);
     if (!card) return null;
@@ -261,6 +265,12 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
               className="h-9 border-0 bg-transparent pl-8 shadow-none focus-visible:ring-0"
             />
           </div>
+          {archiveFallback && (
+            <div className="text-muted-foreground flex items-center justify-between gap-2 border-b px-3 py-1.5 text-xs">
+              <span className="min-w-0 truncate">Archived matches — history may not be synced.</span>
+              <SyncArchivesButton />
+            </div>
+          )}
           <div className="min-h-0 flex-1 overflow-auto p-2">
             {results.length === 0 ? (
               <p className="text-muted-foreground p-3 text-sm">No tasks match.</p>

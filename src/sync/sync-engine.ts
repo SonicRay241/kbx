@@ -274,8 +274,11 @@ async function runPool<T>(items: T[], limit: number, task: (item: T) => Promise<
   await Promise.all(workers)
 }
 
-/** Full two-way sync for all units, using the active source's adapter. */
-export async function syncAll(): Promise<SyncResult> {
+/**
+ * Two-way sync. Active bundles always travel; archive partitions only when the
+ * user asks for them (`syncArchives`), so a board never waits on history.
+ */
+export async function syncAll(options: { archives?: boolean } = {}): Promise<SyncResult> {
   if (syncing) return { pushed: 0, pulled: 0, deleted: 0 }
   syncing = true
   try {
@@ -284,7 +287,7 @@ export async function syncAll(): Promise<SyncResult> {
     const { index, fileId: indexFileId } = await adapter.readIndex()
     const result: SyncResult = { pushed: 0, pulled: 0, deleted: 0 }
     if ((index.version ?? 1) < BUNDLE_VERSION) await migrateLegacyIndex(adapter, index, result)
-    await reconcileBundles(adapter, index, result)
+    await reconcileBundles(adapter, index, result, options.archives === true)
 
     const newIndexFileId = await adapter.writeIndex(index, indexFileId ?? undefined)
     await db.syncMeta.put({
@@ -777,6 +780,7 @@ async function reconcileBundles(
   adapter: SyncAdapter,
   index: DriveIndex,
   result: SyncResult,
+  pullArchives: boolean,
 ): Promise<void> {
   index.graves ??= {}
   // Local deletes become shared tombstones before anything else is applied.
@@ -808,7 +812,13 @@ async function reconcileBundles(
 
   const localHashes = new Map((await buildLocalBundles()).map((bundle) => [bundle.id, bundle.hash]))
   const toPull = Object.entries(index.entries)
-    .filter(([id, entry]) => id.startsWith('bundle:') && !entry.deletedAt && entry.hash !== localHashes.get(id))
+    .filter(([id, entry]) => {
+      if (!id.startsWith('bundle:') || entry.deletedAt) return false
+      // Archives are pulled on demand: their partitions can be large and a
+      // board must not wait for history it may never open.
+      if (!pullArchives && id.startsWith('bundle:archive:')) return false
+      return entry.hash !== localHashes.get(id)
+    })
     .sort(([a], [b]) => bundleRank(a) - bundleRank(b))
 
   const bodies = new Map<string, string>()
@@ -847,6 +857,9 @@ async function reconcileBundles(
   await runPool(bundles, SYNC_CONCURRENCY, async (bundle) => {
     const entry = index.entries[bundle.id]
     if (entry && entry.hash === bundle.hash && !entry.deletedAt) return
+    // A partition we have not pulled yet may hold another device's archives;
+    // uploading now would overwrite them. Wait for an explicit archive sync.
+    if (!pullArchives && bundle.kind === 'archive' && entry && !entry.deletedAt) return
     const fileId = await adapter.uploadFile(bundle.name, bundle.json, entry?.fileId)
     index.entries[bundle.id] = {
       id: bundle.id,
@@ -864,6 +877,9 @@ async function reconcileBundles(
   const keep = new Set(bundles.map((bundle) => bundle.id))
   for (const [id, entry] of Object.entries(index.entries)) {
     if (!id.startsWith('bundle:') || keep.has(id)) continue
+    // Without an archive pull we cannot tell an empty partition from one this
+    // device never fetched — leave archive files alone until then.
+    if (!pullArchives && id.startsWith('bundle:archive:')) continue
     const boardUid = bundleBoardUid(id)
     if (boardUid !== null && !byUid.board.has(boardUid)) continue
     try {
@@ -874,6 +890,11 @@ async function reconcileBundles(
     delete index.entries[id]
     result.deleted += 1
   }
+}
+
+/** Explicit archive fetch: check every partition's hash, download the stale ones. */
+export async function syncArchives(): Promise<SyncResult> {
+  return syncAll({ archives: true })
 }
 
 /** Fold the v1 one-file-per-unit layout into bundles, deleting the old files. */

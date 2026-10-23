@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/table";
 import { softAccentBadge } from "@/components/constants/colors";
 import { useShortcut } from "@/lib/shortcuts";
+import { SyncArchivesButton } from "@/components/sync/sync-archives-button";
 
 export const Route = createFileRoute("/boards/$boardId/list")({
   component: BoardListRoute,
@@ -79,6 +80,9 @@ function BoardList({ boardId }: { boardId: number }) {
           />
         </div>
       </BoardHeaderSlot>
+      <div className="mb-2 flex items-center justify-end">
+        <SyncArchivesButton />
+      </div>
       <Table>
         <TableHeader>
           <TableRow>
