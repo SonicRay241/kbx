@@ -423,7 +423,7 @@ export function SidebarTree({ activeId, onCreateBoard }: { activeId: number | nu
                 return (
                   <SortableRow key={entry.key} id={entry.key} className={board.workspaceId ? "relative pl-6" : ""}>
                     {board.workspaceId &&
-                      <Separator orientation="vertical" className="absolute left-4 w-px h-full bg-foreground"/>
+                      <Separator orientation="vertical" className="absolute left-4 w-px h-full bg-border"/>
                     }
                     {editing?.kind === "board" && editing.id === board.id ? (
                       <SidebarMenuButton asChild>
