@@ -16,6 +16,7 @@ import {
 import { SearchIcon } from "lucide-react";
 
 import { archivedCardIds, db, type BoardRow, type Card, type Tag } from "@/lib/db";
+import { useLocalShortcut } from "@/lib/shortcuts";
 import { TaskCard } from "@/components/board-card";
 import { softAccentBadge } from "@/components/constants/colors";
 import { Badge } from "@/components/ui/badge";
@@ -198,6 +199,38 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     setPreviewId(null);
     void navigate({ to: "/boards/$boardId", params: { boardId: String(card.boardId) } });
   };
+
+  // Keyboard preview: arrows walk the list (wrapping), Enter opens the selected
+  // card. Registered locally so these keys never reach the global registry.
+  const step = (delta: number) => {
+    if (!results.length) return;
+    const index = results.findIndex((row) => row.card.id === previewId);
+    const next =
+      index === -1
+        ? delta > 0
+          ? 0
+          : results.length - 1
+        : (index + delta + results.length) % results.length;
+    setPreviewId(results[next].card.id);
+    // Keyboard navigation may move the selection out of view; hover never does.
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>('[role="dialog"] li button[aria-current="true"]')
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  };
+
+  useLocalShortcut(
+    {
+      arrowdown: () => step(1),
+      arrowup: () => step(-1),
+      enter: () => {
+        const card = results.find((row) => row.card.id === previewId)?.card;
+        if (card) jump(card);
+      },
+    },
+    open,
+  );
 
   return (
     <Dialog

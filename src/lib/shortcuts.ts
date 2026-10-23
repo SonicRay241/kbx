@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useRouterState } from "@tanstack/react-router";
 
 export type ShortcutAction =
@@ -100,6 +100,62 @@ export function useShortcut(action: ShortcutAction, handler: () => void): void {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [keys]);
+}
+
+/**
+ * Component-scoped shortcut layer. Layers stack in mount order: the most
+ * recently mounted layer answers first, then earlier ones, then the global
+ * registry. A binding is a combo → handler map (`{ ArrowDown: fn, Enter: fn }`);
+ * combos use the same syntax as `SHORTCUTS` ("mod+k", "arrowdown", "enter").
+ */
+export type LocalShortcutBindings = Record<string, (event: KeyboardEvent) => void>;
+
+type LocalShortcutLayer = { current: LocalShortcutBindings };
+
+// Mount order — the last entry is the topmost override (popover over modal, …).
+const localLayers: LocalShortcutLayer[] = [];
+let localListenerAttached = false;
+
+/** Capture phase on window, so a handled combo never reaches the global (bubble) handler. */
+function runLocalShortcut(event: KeyboardEvent): void {
+  for (let index = localLayers.length - 1; index >= 0; index--) {
+    const bindings = localLayers[index].current;
+    for (const combo of Object.keys(bindings)) {
+      if (!matches(event, combo)) continue;
+      event.preventDefault();
+      event.stopPropagation();
+      bindings[combo](event);
+      return;
+    }
+  }
+}
+
+export function useLocalShortcut(bindings: LocalShortcutBindings, enabled = true): void {
+  const layer = useRef<LocalShortcutLayer>({ current: bindings });
+  // Keep the listener's view of the handlers fresh without re-subscribing (and
+  // without changing this layer's position in the stack). Layout effects flush
+  // before the next keydown can read the layer.
+  useLayoutEffect(() => {
+    layer.current.current = bindings;
+  });
+
+  useEffect(() => {
+    if (!enabled) return;
+    const mine = layer.current;
+    localLayers.push(mine);
+    if (!localListenerAttached) {
+      window.addEventListener("keydown", runLocalShortcut, true);
+      localListenerAttached = true;
+    }
+    return () => {
+      const index = localLayers.lastIndexOf(mine);
+      if (index !== -1) localLayers.splice(index, 1);
+      if (!localLayers.length && localListenerAttached) {
+        window.removeEventListener("keydown", runLocalShortcut, true);
+        localListenerAttached = false;
+      }
+    };
+  }, [enabled]);
 }
 
 /** Display label for the action on the current page, or null when unbound. */
