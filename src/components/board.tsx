@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/kanban'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { ArchiveIcon, ColumnsSettingsIcon, GripVerticalIcon, PlusIcon } from 'lucide-react'
+import { ArchiveIcon, ArrowDownWideNarrowIcon, ColumnsSettingsIcon, GripVerticalIcon, PlusIcon } from 'lucide-react'
 import { BoardCard } from '@/components/board-card'
 import { UpstreamDialog } from '@/components/upstream-dialog'
 import { useShortcut } from '@/lib/shortcuts'
@@ -309,6 +309,41 @@ export function Board({ boardId }: { boardId: number }) {
     )
   }
 
+  // Sort every column: ready cards first, then blocked ones from closest to
+  // unblocked downwards. Writes the new order through the same path a drag
+  // commit uses, so the order survives a reload.
+  const handleSort = () => {
+    const progress = (card: CardData) => {
+      if (!card.upstreamIds.length) return 1
+      const done = card.upstreamIds.filter(
+        id => (cardById.get(id)?.column ?? finishedColumnId) === finishedColumnId,
+      ).length
+      return done / card.upstreamIds.length
+    }
+    const rank = (card: CardData) => (blockedIds.has(card.id) ? 1 : 0)
+    const compare = (a: CardData, b: CardData) =>
+      rank(a) - rank(b) || progress(b) - progress(a) || a.title.localeCompare(b.title)
+
+    const grouped: Record<string, CardData[]> = {}
+    for (const col of columns) grouped[col.id] = []
+    for (const card of cards) (grouped[card.column] ??= []).push(card)
+
+    const changes: { key: number; changes: { order: number } }[] = []
+    const next: CardData[] = []
+    // Known columns first, then any orphaned column id (kept so sorting never
+    // drops cards from state).
+    const keys = [...columns.map(c => c.id), ...Object.keys(grouped).filter(k => !columns.some(c => c.id === k))]
+    for (const key of keys) {
+      grouped[key].sort(compare).forEach((card, order) => {
+        if (card.order !== order) changes.push({ key: card.id, changes: { order } })
+        next.push(card.order === order ? card : { ...card, order })
+      })
+    }
+    if (!changes.length) return
+    setCards(next)
+    void moveCards(changes)
+  }
+
   // A new drag always starts from the current layout — compose previews against that.
   const resetDragLayout = () => {
     dragLayoutRef.current = { ...cardsByColumn }
@@ -354,6 +389,14 @@ export function Board({ boardId }: { boardId: number }) {
           />
           Hide blocked
         </label>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="outline" size="icon" className='size-7 rounded-md' aria-label="Sort by state" onClick={handleSort}>
+              <ArrowDownWideNarrowIcon className='size-3 stroke-2'/>
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Sort by state</TooltipContent>
+        </Tooltip>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button variant="outline" size="icon" className='size-7 rounded-md' onClick={() => setArchiveOpen(true)}>

@@ -132,14 +132,6 @@ export function BoardCard({
   onEdit,
   ...props
 }: BoardCardProps) {
-  const upstreams = card.upstreamIds
-    .map((id) => cardById.get(id))
-    .filter((c) => c) as CardData[];
-  const doneCount = upstreams.filter(
-    (c) => c.column === finishedColumnId,
-  ).length;
-  const blocked = upstreams.length > 0 && doneCount < upstreams.length;
-
   const inner = (
     <TaskCard
       card={card}
@@ -152,18 +144,10 @@ export function BoardCard({
   );
 
   return (
-    <KanbanItem
-      value={String(card.id)}
-      disabled={blocked && !isOverlay ? { draggable: true } : undefined}
-      {...props}
-    >
-      {isOverlay ? (
-        inner
-      ) : (
-        <KanbanItemHandle className={cn(blocked && "cursor-not-allowed!")}>
-          <span className={cn("block", blocked && "opacity-60")}>{inner}</span>
-        </KanbanItemHandle>
-      )}
+    // Blocked cards still drag — dropping one into the finished column is vetoed
+    // by the board (see `isDropVetoed`), so it just animates back.
+    <KanbanItem value={String(card.id)} {...props}>
+      {isOverlay ? inner : <KanbanItemHandle>{inner}</KanbanItemHandle>}
     </KanbanItem>
   );
 }
