@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import type { KanbanMoveEvent } from '@/components/ui/kanban'
 
 import { archivedCardIds, db, DEFAULT_COLUMNS, type Card as CardData, type BoardRow, type Tag } from '@/lib/db'
@@ -19,6 +19,7 @@ import { ArchiveIcon, ArrowDownWideNarrowIcon, ColumnsSettingsIcon, GripVertical
 import { BoardCard } from '@/components/board-card'
 import { UpstreamDialog } from '@/components/upstream-dialog'
 import { useShortcut } from '@/lib/shortcuts'
+import { subscribeSyncApplied } from '@/sync/sync-engine'
 import { ColumnsDialog } from '@/components/columns-dialog'
 import { ArchiveDialog } from '@/components/archive-dialog'
 import { Switch } from '@/components/ui/switch'
@@ -115,20 +116,25 @@ export function Board({ boardId }: { boardId: number }) {
   const [board, setBoard] = useState<BoardRow | null>(null)
   const [tags, setTags] = useState<Tag[]>([])
 
-  // DB is read once on mount; local state is the render truth and every mutation
-  // writes through to IndexedDB in parallel (fire-and-forget).
-  useEffect(() => {
-    void (async () => {
-      const [p, cs, ts] = await Promise.all([
-        db.boards.get(boardId),
-        db.cards.where('boardId').equals(boardId).toArray(),
-        db.tags.where('boardId').equals(boardId).toArray()
-      ])
-      setBoard(p ?? null)
-      setCards(cs.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt))
-      setTags(ts.sort((a, b) => a.name.localeCompare(b.name)))
-    })()
+  // DB is read on mount and whenever a sync lands; in between, local state is
+  // the render truth and every mutation writes through to IndexedDB.
+  const reload = useCallback(async () => {
+    const [p, cs, ts] = await Promise.all([
+      db.boards.get(boardId),
+      db.cards.where('boardId').equals(boardId).toArray(),
+      db.tags.where('boardId').equals(boardId).toArray()
+    ])
+    setBoard(p ?? null)
+    setCards(cs.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt))
+    setTags(ts.sort((a, b) => a.name.localeCompare(b.name)))
   }, [boardId])
+
+  useEffect(() => {
+    // The read is async; the state it sets is the effect's whole purpose (the
+    // board renders from its own state, not a live query).
+    // oxlint-disable-next-line react/set-state-in-effect
+    void reload()
+  }, [reload])
 
   const [dialogCardId, setDialogCardId] = useState<number | null>(null)
   const [columnsOpen, setColumnsOpen] = useState(false)
@@ -174,6 +180,26 @@ export function Board({ boardId }: { boardId: number }) {
   // Column order + card layout at drag start; veto/cancel restores it so rejected
   // moves animate back and previews never leak into the settled board.
   const dragStartSnapshot = useRef<Record<string, CardData[]> | null>(null)
+
+  // A pull can change rows under an open board. Defer while a drag composes
+  // previews (its layout math reads state) and flush once the drag settles.
+  const pendingSyncRefresh = useRef(false)
+  useEffect(
+    () =>
+      subscribeSyncApplied(() => {
+        if (dragStartSnapshot.current) {
+          pendingSyncRefresh.current = true
+          return
+        }
+        void reload()
+      }),
+    [reload],
+  )
+  const flushPendingSyncRefresh = () => {
+    if (!pendingSyncRefresh.current) return
+    pendingSyncRefresh.current = false
+    void reload()
+  }
 
   const blockedByUpstream = (id: number) => blockedIds.has(id)
 
@@ -222,6 +248,7 @@ export function Board({ boardId }: { boardId: number }) {
       dragLayoutRef.current = null
       dragStartSnapshot.current = null
     }
+    flushPendingSyncRefresh()
   }
 
   const handleMove = ({ event, commit, activeContainer, overContainer, activeIndex, overIndex }: KanbanMoveEvent) => {
@@ -289,6 +316,8 @@ export function Board({ boardId }: { boardId: number }) {
     // Commit: this IS the settled layout — state and DB updated directly, ref cleared.
     dragLayoutRef.current = commit ? null : nextRecord
     if (!commit) return
+    // The drop is settled: the snapshot is only needed for veto/cancel restores.
+    dragStartSnapshot.current = null
 
     // Hidden (filtered) cards are not part of the composed layout; carry them
     // through so toggling the filter back does not lose them until reload.
@@ -306,7 +335,7 @@ export function Board({ boardId }: { boardId: number }) {
         (nextRecord[col.id] ?? []).map((card, order) => ({ key: card.id!, changes: { order, column: card.column } })),
       ),
       finishedColumnId,
-    )
+    ).then(flushPendingSyncRefresh)
   }
 
   // Sort every column: ready cards first, then blocked ones from closest to

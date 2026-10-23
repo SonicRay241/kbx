@@ -295,6 +295,10 @@ export async function syncAll(options: { archives?: boolean } = {}): Promise<Syn
       fileId: newIndexFileId,
       lastSyncedAt: new Date().toISOString(),
     })
+    // Anything that touched rows may have changed what an open page shows.
+    if (result.pushed || result.pulled || result.deleted) {
+      for (const listener of syncAppliedListeners) listener(result)
+    }
     return result
   } finally {
     syncing = false
@@ -889,6 +893,17 @@ async function reconcileBundles(
     }
     delete index.entries[id]
     result.deleted += 1
+  }
+}
+
+/** Notified after a sync that actually changed local rows (pulls, pushes, deletes). */
+type SyncAppliedListener = (result: SyncResult) => void
+const syncAppliedListeners = new Set<SyncAppliedListener>()
+
+export function subscribeSyncApplied(listener: SyncAppliedListener): () => void {
+  syncAppliedListeners.add(listener)
+  return () => {
+    syncAppliedListeners.delete(listener)
   }
 }
 
