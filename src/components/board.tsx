@@ -386,7 +386,7 @@ export function Board({ boardId }: { boardId: number }) {
           onDragBegin={resetDragLayout}
           onDragCancel={restoreDragStart}
           isDropVetoed={(activeId, containerId) => containerId === finishedColumnId && blockedByUpstream(activeId)}
-          className="relative px-4 w-fit h-full"
+          className="relative px-4 pb-4 w-fit h-full"
         >
           <KanbanBoard
             className="grid auto-rows-fr gap-3"
