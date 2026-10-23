@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { CloudAlertIcon, CloudCheckIcon, LoaderCircleIcon } from 'lucide-react'
 import { toast } from 'sonner'
+import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 import { subscribeSyncProgress, type SyncProgress } from '@/sync/sync-engine'
 
@@ -27,6 +28,9 @@ export function SyncToastBridge() {
         id: TOAST_ID,
         duration: progress.status === 'running' ? Infinity : progress.status === 'done' ? 3000 : 8000,
         dismissible: progress.status !== 'running',
+        // Custom toasts are width:fit-content by default; without this the card
+        // shrink-wraps and hugs the left edge of the centered toaster.
+        className: 'w-full',
       })
     })
   }, [])
@@ -40,7 +44,7 @@ function SyncToastCard({ progress }: { progress: SyncProgress }) {
   const fill = failed ? Math.max(pct, 8) : pct
 
   return (
-    <div className="bg-card text-card-foreground border-border w-[min(21rem,calc(100vw-2rem))] rounded-xl border p-4 shadow-lg">
+    <div className="bg-card text-card-foreground border-border w-full rounded-xl border p-4 shadow-lg">
       <div className="flex items-start gap-3">
         <div
           className={cn(
@@ -66,18 +70,17 @@ function SyncToastCard({ progress }: { progress: SyncProgress }) {
             {failed
               ? `Error message: ${progress.message ?? 'Unknown error'}`
               : done
-                ? `Saved to ${progress.source}`
+                ? `Synced to ${progress.source}`
                 : `Progress ${pct}%`}
           </p>
-          <div className="bg-muted mt-2 h-1.5 w-full overflow-hidden rounded-full">
-            <div
-              className={cn(
-                'h-full rounded-full transition-[width] duration-300 ease-out',
-                failed ? 'bg-destructive' : done ? 'bg-green-600 dark:bg-green-400' : 'bg-foreground',
-              )}
-              style={{ width: `${fill}%` }}
-            />
-          </div>
+          <Progress
+            value={fill}
+            className={cn(
+              'mt-2 h-1.5',
+              failed && '**:data-[slot=progress-indicator]:bg-destructive',
+              done && '**:data-[slot=progress-indicator]:bg-green-600 dark:**:data-[slot=progress-indicator]:bg-green-400',
+            )}
+          />
         </div>
       </div>
     </div>
