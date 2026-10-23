@@ -145,7 +145,7 @@ export async function readIndex(): Promise<{ index: DriveIndex; fileId: string |
   const raw = await downloadFile(fileId)
   try {
     const parsed = JSON.parse(raw) as DriveIndex
-    return { index: { entries: parsed.entries ?? {} }, fileId }
+    return { index: { version: parsed.version, graves: parsed.graves, entries: parsed.entries ?? {} }, fileId }
   } catch (error) {
     // Corrupt index: start fresh rather than failing forever, but say so —
     // a silent reset can quietly forget tombstones.

@@ -126,6 +126,10 @@ async function listCollection(config: WebdavConfig): Promise<string[]> {
   return names
 }
 
+/** MKCOL+PROPFIND per segment is two round trips; do it once per connection. */
+let ensuredConfig: WebdavConfig | null = null
+let ensuredPromise: Promise<void> | null = null
+
 async function ensureCollection(config: WebdavConfig): Promise<void> {
   const target = collectionPath(config)
   // MKCOL parents bottom-up so a missing prefix (e.g. "/Sync/Docs") is
@@ -133,6 +137,17 @@ async function ensureCollection(config: WebdavConfig): Promise<void> {
   // 405 Method Not Allowed — that is "already there", not a failure (the
   // exact behavior of Go x/net/webdav servers like Cloudreve). Confirm
   // existence with a Depth-0 PROPFIND before accepting the 405.
+  if (
+    ensuredConfig &&
+    ensuredConfig.baseUrl === config.baseUrl &&
+    ensuredConfig.prefixKey === config.prefixKey &&
+    ensuredConfig.username === config.username
+  ) {
+    await ensuredPromise
+    return
+  }
+  ensuredConfig = config
+  ensuredPromise = (async () => {
   const segments = target.split('/').filter(Boolean)
   let current = ''
   for (const segment of segments) {
@@ -154,6 +169,8 @@ async function ensureCollection(config: WebdavConfig): Promise<void> {
       throw error
     }
   }
+  })()
+  await ensuredPromise
 }
 
 async function uploadFile(name: string, content: string, fileId?: string): Promise<string> {
@@ -204,7 +221,7 @@ async function readIndex(): Promise<{ index: DriveIndex; fileId: string | null }
     // overwriting the cloud index from a transient failure.
     try {
       const parsed = JSON.parse(raw) as DriveIndex
-      return { index: { entries: parsed.entries ?? {} }, fileId: INDEX_NAME }
+      return { index: { version: parsed.version, graves: parsed.graves, entries: parsed.entries ?? {} }, fileId: INDEX_NAME }
     } catch (error) {
       console.error(
         'kanban index.json is corrupt and was reset to empty; ' +

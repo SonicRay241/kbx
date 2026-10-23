@@ -1,4 +1,4 @@
-import { db, type BoardRow, type Card, type Tag, type Workspace } from '@/lib/db'
+import { archivedCardIds, db, type BoardRow, type Card, type Tag, type Workspace } from '@/lib/db'
 import { sha256Hex, type DriveIndex } from './wire'
 import { activeAdapter, type SyncAdapter } from './sync-sources'
 import { isWebdavConnected } from './adapters/webdav'
@@ -223,6 +223,21 @@ function unitPayload(kind: UnitKind, row: BoardRow | Card | Tag | Workspace, ref
   return JSON.stringify(doc)
 }
 
+function toLocalUnit(kind: UnitKind, row: BoardRow | Card | Tag | Workspace): LocalUnit {
+  const stamps = row.fieldTimestamps ?? {}
+  const rowTs = row.updatedAt ?? row.createdAt
+  const stampValues = MERGEABLE_FIELDS[kind].map((field) => stamps[field] ?? rowTs)
+  return {
+    id: unitId(kind, row.uid),
+    kind,
+    rowId: kind === 'card' ? (row as Card).id : row.id ?? 0,
+    stamps,
+    rowTs,
+    updatedAt: Math.max(rowTs, ...(stampValues.length ? stampValues : [0])),
+    row,
+  }
+}
+
 async function loadLocalUnits(): Promise<LocalUnit[]> {
   const [boards, cards, tags, workspaces] = await Promise.all([
     db.boards.toArray(),
@@ -232,24 +247,31 @@ async function loadLocalUnits(): Promise<LocalUnit[]> {
   ])
   const units: LocalUnit[] = []
   const addUnit = (kind: UnitKind, row: BoardRow | Card | Tag | Workspace): void => {
-    const stamps = row.fieldTimestamps ?? {}
-    const rowTs = row.updatedAt ?? row.createdAt
-    const stampValues = MERGEABLE_FIELDS[kind].map((field) => stamps[field] ?? rowTs)
-    units.push({
-      id: unitId(kind, row.uid),
-      kind,
-      rowId: kind === 'card' ? (row as Card).id : row.id ?? 0,
-      stamps,
-      rowTs,
-      updatedAt: Math.max(rowTs, ...(stampValues.length ? stampValues : [0])),
-      row,
-    })
+    units.push(toLocalUnit(kind, row))
   }
   for (const workspace of workspaces) addUnit('workspace', workspace)
   for (const board of boards) addUnit('board', board)
   for (const card of cards) addUnit('card', card)
   for (const tag of tags) addUnit('tag', tag)
   return units
+}
+
+/**
+ * Bounded parallelism for backend calls. A full sync issues two round trips per
+ * unit; on Drive that is 100–300 ms each, so the wall clock is all latency.
+ * Local DB work stays sequential (and FK-ordered) outside these pools.
+ */
+const SYNC_CONCURRENCY = 4
+
+async function runPool<T>(items: T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++]
+      await task(item)
+    }
+  })
+  await Promise.all(workers)
 }
 
 /** Full two-way sync for all units, using the active source's adapter. */
@@ -261,7 +283,8 @@ export async function syncAll(): Promise<SyncResult> {
 
     const { index, fileId: indexFileId } = await adapter.readIndex()
     const result: SyncResult = { pushed: 0, pulled: 0, deleted: 0 }
-    await reconcile(adapter, index, result)
+    if ((index.version ?? 1) < BUNDLE_VERSION) await migrateLegacyIndex(adapter, index, result)
+    await reconcileBundles(adapter, index, result)
 
     const newIndexFileId = await adapter.writeIndex(index, indexFileId ?? undefined)
     await db.syncMeta.put({
@@ -280,7 +303,12 @@ export async function syncAll(): Promise<SyncResult> {
  * pulls/pushes/deletes into `result`. All backend access goes through the
  * adapter, so logic is identical for Drive and WebDAV.
  */
-async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncResult): Promise<void> {
+async function reconcileLegacy(
+  adapter: SyncAdapter,
+  index: DriveIndex,
+  result: SyncResult,
+  push = true,
+): Promise<void> {
   // Snapshot for the pull phase only; the push phase re-reads fresh state
   // below (the pull can persist merged rows and stamped meta).
   const localUnits = await loadLocalUnits()
@@ -295,6 +323,24 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
     unitId.startsWith('workspace:') ? 0 : unitId.startsWith('board:') ? 1 : unitId.startsWith('tag:') ? 2 : 3
   /** Refs dropped during the pull because the target row wasn't inserted yet. */
   const pendingRefs = new Map<number, { upstreamIds?: unknown; tagIds?: unknown }>()
+  // Fetch every unit we will need in parallel; the apply loop below stays
+  // sequential (boards before their cards) but pays no per-unit round trip.
+  const remoteJson = new Map<string, string>()
+  await runPool(
+    Object.entries(index.entries).filter(([id, entry]) => {
+      if (entry.deletedAt) return false
+      const local = localById.get(id)
+      return !local || localHashById.get(id) !== entry.hash
+    }),
+    SYNC_CONCURRENCY,
+    async ([id, entry]) => {
+      try {
+        remoteJson.set(id, await adapter.downloadFile(entry.fileId))
+      } catch (error) {
+        if (!adapter.isNotFound(error)) throw error
+      }
+    },
+  )
   for (const [id, entry] of Object.entries(index.entries).sort(([a], [b]) => kindRank(a) - kindRank(b))) {
     const local = localById.get(id)
     const [kind, uid] = splitUnitId(id)
@@ -329,21 +375,16 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
         result.deleted += 1
         continue
       }
-      let json: string
-      try {
-        json = await adapter.downloadFile(entry.fileId)
-      } catch (error) {
-        if (adapter.isNotFound(error)) {
-          // Cloud file vanished (crash between deleteFile and writeIndex, or
-          // manual deletion): nothing to pull. Clearing the index entry lets
-          // the push phase re-create it from another device's copy.
-          delete index.entries[id]
-          continue
-        }
-        throw error
+      const json = remoteJson.get(id)
+      if (json === undefined) {
+        // Cloud file vanished (crash between deleteFile and writeIndex, or
+        // manual deletion): nothing to pull. Clearing the index entry lets
+        // the push phase re-create it from another device's copy.
+        delete index.entries[id]
+        continue
       }
       try {
-        const inserted = await putUnitRow(kind, uid, json, entry.updatedAt)
+        const inserted = await putUnitRow(kind, uid, parseCloudDoc(json), entry.updatedAt)
         if (kind === 'card') {
           pendingRefs.set(inserted.id, {
             upstreamIds: inserted.fields.upstreamIds,
@@ -370,16 +411,11 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
     }
     // Diverged: merge field-by-field, later timestamp wins per field (a
     // LWW-Register CRDT).
-    let json: string
-    try {
-      json = await adapter.downloadFile(entry.fileId)
-    } catch (error) {
-      if (adapter.isNotFound(error)) {
-        // Cloud file gone: adopt local as the merge winner and let the push
-        // phase re-create the file (uploadFile also self-heals stale ids).
-        continue
-      }
-      throw error
+    const json = remoteJson.get(id)
+    if (json === undefined) {
+      // Cloud file gone: adopt local as the merge winner and let the push
+      // phase re-create the file (uploadFile also self-heals stale ids).
+      continue
     }
     const remote = parseCloudDoc(json)
     const merge = mergeUnit(local, kind, remote, entry.updatedAt)
@@ -451,6 +487,8 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
     }
   }
 
+  if (!push) return
+
   // --- Push phase: units flagged cloudSynced.
   // Re-read state: the pull phase may have persisted merged rows and stamped
   // meta. Iterating the pre-pull snapshot here would resurrect stale content
@@ -461,7 +499,7 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
     loadRefMaps(),
   ])
   const pushMetaById = new Map(pushMetas.map((m) => [m.id, m]))
-  for (const unit of pushUnits) {
+  await runPool(pushUnits, SYNC_CONCURRENCY, async (unit) => {
     const meta = pushMetaById.get(unit.id)
     const hash = await sha256Hex(unitPayload(unit.kind, unit.row, pushRefs))
     const entry = index.entries[unit.id]
@@ -483,7 +521,7 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
       entry.hash === hash &&
       entry.fileId === knownFileId
     ) {
-      continue // unchanged since last push — skip upload entirely
+      return // unchanged since last push — skip upload entirely
     }
 
     // id-suffixed filename: renames never collide, ids stay traceable.
@@ -506,7 +544,369 @@ async function reconcile(adapter: SyncAdapter, index: DriveIndex, result: SyncRe
       fileId,
     })
     result.pushed += 1
+  })
+}
+
+/**
+ * Bundle protocol (index version 2).
+ *
+ * One file per board instead of one per card: a board's tags + active cards
+ * travel together, archived cards go to month partitions keyed by
+ * `completedAt`, and everything else (workspaces, board rows) lives in two
+ * small control bundles. A sync therefore costs one read per *changed* bundle
+ * instead of two round trips per card.
+ *
+ * The file is a container only: each unit keeps its own `{fields, ts, rowTs}`
+ * doc, so merges stay field-level LWW. Tombstones live in the index itself
+ * (`index.graves`) — the index is always fetched, so a partition pulled later
+ * can never resurrect a deleted card.
+ */
+const BUNDLE_VERSION = 2
+const BUNDLE_WORKSPACES = 'bundle:workspaces'
+const BUNDLE_BOARDS = 'bundle:boards'
+
+interface BundleDoc {
+  v: 2
+  units: Record<string, CloudUnitDoc>
+}
+
+type BundleKind = 'workspaces' | 'boards' | 'board' | 'archive'
+
+interface LocalBundle {
+  id: string
+  kind: BundleKind
+  boardUid: string | null
+  units: { id: string; kind: UnitKind; doc: CloudUnitDoc }[]
+  json: string
+  hash: string
+  name: string
+}
+
+const boardBundleId = (boardUid: string) => `bundle:board:${boardUid}`
+const archiveBundleId = (boardUid: string, month: string) => `bundle:archive:${boardUid}:${month}`
+
+/** Partition key: immutable once written, so edits never move a card between files. */
+function monthKey(completedAt: number | null | undefined): string {
+  if (!completedAt) return 'unknown'
+  const date = new Date(completedAt)
+  if (Number.isNaN(date.getTime())) return 'unknown'
+  return date.toISOString().slice(0, 7)
+}
+
+function bundleRank(id: string): number {
+  if (id === BUNDLE_WORKSPACES) return 0
+  if (id === BUNDLE_BOARDS) return 1
+  if (id.startsWith('bundle:board:')) return 2
+  return 3
+}
+
+async function makeBundle(
+  id: string,
+  kind: BundleKind,
+  boardUid: string | null,
+  units: LocalBundle['units'],
+  name: string,
+): Promise<LocalBundle> {
+  // Deterministic key order → stable hashes across devices.
+  const sorted = [...units].sort((a, b) => a.id.localeCompare(b.id))
+  const map: Record<string, CloudUnitDoc> = {}
+  for (const unit of sorted) map[unit.id] = unit.doc
+  const json = JSON.stringify({ v: 2, units: map } satisfies BundleDoc)
+  return { id, kind, boardUid, units: sorted, json, hash: await sha256Hex(json), name }
+}
+
+/** Every bundle this device would write, rebuilt from local state. */
+async function buildLocalBundles(): Promise<LocalBundle[]> {
+  const [boards, cards, tags, workspaces] = await Promise.all([
+    db.boards.toArray(),
+    db.cards.toArray(),
+    db.tags.toArray(),
+    db.workspaces.toArray(),
+  ])
+  const refs = await loadRefMaps()
+  const bundles: LocalBundle[] = []
+
+  if (workspaces.length) {
+    bundles.push(
+      await makeBundle(
+        BUNDLE_WORKSPACES,
+        'workspaces',
+        null,
+        workspaces.map((w) => ({ id: unitId('workspace', w.uid), kind: 'workspace' as const, doc: unitDoc('workspace', w, refs) })),
+        'bundle-workspaces.json',
+      ),
+    )
   }
+  if (boards.length) {
+    bundles.push(
+      await makeBundle(
+        BUNDLE_BOARDS,
+        'boards',
+        null,
+        boards.map((b) => ({ id: unitId('board', b.uid), kind: 'board' as const, doc: unitDoc('board', b, refs) })),
+        'bundle-boards.json',
+      ),
+    )
+  }
+
+  const cardUnits = (list: Card[]): LocalBundle['units'] =>
+    list.map((c) => ({ id: unitId('card', c.uid), kind: 'card' as const, doc: unitDoc('card', c, refs) }))
+
+  for (const board of boards) {
+    const boardId = board.id!
+    const archived = archivedCardIds(board, cards)
+    const tagsHere = tags.filter((t) => t.boardId === boardId)
+    const active = cards.filter((c) => c.boardId === boardId && !archived.has(c.id))
+    bundles.push(
+      await makeBundle(
+        boardBundleId(board.uid),
+        'board',
+        board.uid,
+        [
+          ...tagsHere.map((t) => ({ id: unitId('tag', t.uid), kind: 'tag' as const, doc: unitDoc('tag', t, refs) })),
+          ...cardUnits(active),
+        ],
+        `bundle-board-${board.uid.slice(0, 8)}.json`,
+      ),
+    )
+    const byMonth = new Map<string, Card[]>()
+    for (const card of cards) {
+      if (card.boardId !== boardId || !archived.has(card.id)) continue
+      const key = monthKey(card.completedAt)
+      const list = byMonth.get(key)
+      if (list) list.push(card)
+      else byMonth.set(key, [card])
+    }
+    for (const [month, list] of [...byMonth.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      bundles.push(
+        await makeBundle(
+          archiveBundleId(board.uid, month),
+          'archive',
+          board.uid,
+          cardUnits(list),
+          `archive-${board.uid.slice(0, 8)}-${month}.json`,
+        ),
+      )
+    }
+  }
+  return bundles
+}
+
+/** Board uid a bundle id belongs to, or null for the global control bundles. */
+function bundleBoardUid(id: string): string | null {
+  if (id.startsWith('bundle:board:')) return id.slice('bundle:board:'.length)
+  if (id.startsWith('bundle:archive:')) {
+    const rest = id.slice('bundle:archive:'.length)
+    const cut = rest.lastIndexOf(':')
+    return cut === -1 ? rest : rest.slice(0, cut)
+  }
+  return null
+}
+
+async function healPendingRefs(
+  pendingRefs: Map<number, { upstreamIds?: unknown; tagIds?: unknown }>,
+): Promise<void> {
+  if (pendingRefs.size === 0) return
+  const refs = await loadRefMaps()
+  for (const [rowId, raw] of pendingRefs) {
+    const row = await db.cards.get(rowId)
+    if (!row) continue
+    const patch: Partial<Card> = {}
+    if (raw.upstreamIds !== undefined) {
+      const healed = [...new Set([...row.upstreamIds, ...asRefArray(raw.upstreamIds, refs.cardIdByUid)])]
+      if (healed.length !== row.upstreamIds.length) patch.upstreamIds = healed
+    }
+    if (raw.tagIds !== undefined) {
+      const healed = [...new Set([...row.tagIds, ...asRefArray(raw.tagIds, refs.tagIdByUid)])]
+      if (healed.length !== row.tagIds.length) patch.tagIds = healed
+    }
+    if (Object.keys(patch).length > 0) await db.cards.update(rowId, patch)
+  }
+}
+
+/** Merge one unit out of a pulled bundle into the local row. */
+async function applyRemoteUnit(
+  index: DriveIndex,
+  kind: UnitKind,
+  uid: string,
+  doc: CloudUnitDoc,
+  entryUpdatedAt: number,
+  byUid: Record<UnitKind, Map<string, LocalUnit>>,
+  pendingRefs: Map<number, { upstreamIds?: unknown; tagIds?: unknown }>,
+  result: SyncResult,
+): Promise<void> {
+  const id = unitId(kind, uid)
+  const grave = index.graves?.[id]
+  if (grave !== undefined && grave >= (doc.rowTs || entryUpdatedAt)) return
+
+  const local = byUid[kind].get(uid)
+  if (!local) {
+    if (await db.deletedEntities.get(id)) return
+    try {
+      const inserted = await putUnitRow(kind, uid, doc, entryUpdatedAt)
+      if (kind === 'card') {
+        pendingRefs.set(inserted.id, { upstreamIds: doc.fields.upstreamIds, tagIds: doc.fields.tagIds })
+      }
+      const row = await getUnitRow(kind, inserted.id)
+      if (row) byUid[kind].set(uid, toLocalUnit(kind, row))
+      result.pulled += 1
+    } catch (error) {
+      // Boards ship in the control bundle and are applied first, so an orphan
+      // means the other device pushed a partial state; it heals next sync.
+      if (error instanceof OrphanedUnitError) return
+      throw error
+    }
+    return
+  }
+
+  const merge = mergeUnit(local, kind, doc, entryUpdatedAt)
+  if (!merge.changed) return
+  await updateUnitRow(kind, local.rowId, merge)
+  if (kind === 'card') {
+    pendingRefs.set(local.rowId, {
+      upstreamIds: 'upstreamIds' in merge.remoteWins ? doc.fields.upstreamIds : undefined,
+      tagIds: 'tagIds' in merge.remoteWins ? doc.fields.tagIds : undefined,
+    })
+  }
+  const row = await getUnitRow(kind, local.rowId)
+  if (row) byUid[kind].set(uid, toLocalUnit(kind, row))
+  result.pulled += 1
+}
+
+async function reconcileBundles(
+  adapter: SyncAdapter,
+  index: DriveIndex,
+  result: SyncResult,
+): Promise<void> {
+  index.graves ??= {}
+  // Local deletes become shared tombstones before anything else is applied.
+  for (const pending of await db.deletedEntities.toArray()) {
+    index.graves[pending.id] = Math.max(index.graves[pending.id] ?? 0, pending.deletedAt)
+    await db.deletedEntities.delete(pending.id)
+  }
+
+  const byUid: Record<UnitKind, Map<string, LocalUnit>> = {
+    workspace: new Map(),
+    board: new Map(),
+    card: new Map(),
+    tag: new Map(),
+  }
+  for (const unit of await loadLocalUnits()) byUid[unit.kind].set(unit.id.slice(unit.kind.length + 1), unit)
+
+  // Tombstones first: a delete that lost the race is re-applied, an edit that
+  // is newer than the grave survives and will be pushed back.
+  for (const [id, deletedAt] of Object.entries(index.graves)) {
+    const [kind, uid] = id.split(':') as [UnitKind, string]
+    if (!byUid[kind]) continue
+    const local = byUid[kind].get(uid)
+    if (!local) continue
+    if (deletedAt < local.updatedAt) continue
+    await deleteUnitRow(kind, uid)
+    byUid[kind].delete(uid)
+    result.deleted += 1
+  }
+
+  const localHashes = new Map((await buildLocalBundles()).map((bundle) => [bundle.id, bundle.hash]))
+  const toPull = Object.entries(index.entries)
+    .filter(([id, entry]) => id.startsWith('bundle:') && !entry.deletedAt && entry.hash !== localHashes.get(id))
+    .sort(([a], [b]) => bundleRank(a) - bundleRank(b))
+
+  const bodies = new Map<string, string>()
+  await runPool(toPull, SYNC_CONCURRENCY, async ([id, entry]) => {
+    try {
+      bodies.set(id, await adapter.downloadFile(entry.fileId))
+    } catch (error) {
+      if (!adapter.isNotFound(error)) throw error
+    }
+  })
+
+  const pendingRefs = new Map<number, { upstreamIds?: unknown; tagIds?: unknown }>()
+  for (const [id, entry] of toPull) {
+    const json = bodies.get(id)
+    if (json === undefined) {
+      delete index.entries[id]
+      continue
+    }
+    let bundleDoc: BundleDoc
+    try {
+      bundleDoc = JSON.parse(json) as BundleDoc
+    } catch {
+      continue // unreadable bundle: the push phase overwrites it from local state
+    }
+    if (!bundleDoc?.units) continue
+    for (const [id, unit] of Object.entries(bundleDoc.units)) {
+      const [kind, uid] = id.split(':') as [UnitKind, string]
+      if (!byUid[kind]) continue
+      await applyRemoteUnit(index, kind, uid, unit, entry.updatedAt, byUid, pendingRefs, result)
+    }
+  }
+  await healPendingRefs(pendingRefs)
+
+  // Push: rebuild from post-pull state so a merge is never masked by a stale hash.
+  const bundles = await buildLocalBundles()
+  await runPool(bundles, SYNC_CONCURRENCY, async (bundle) => {
+    const entry = index.entries[bundle.id]
+    if (entry && entry.hash === bundle.hash && !entry.deletedAt) return
+    const fileId = await adapter.uploadFile(bundle.name, bundle.json, entry?.fileId)
+    index.entries[bundle.id] = {
+      id: bundle.id,
+      fileId,
+      hash: bundle.hash,
+      name: bundle.name,
+      updatedAt: Date.now(),
+    }
+    result.pushed += 1
+  })
+
+  // Bundles we no longer produce: a deleted board, or a partition whose cards
+  // were unarchived/re-bucketed. Skip boards this device has never seen — the
+  // pull may simply not have reached them yet.
+  const keep = new Set(bundles.map((bundle) => bundle.id))
+  for (const [id, entry] of Object.entries(index.entries)) {
+    if (!id.startsWith('bundle:') || keep.has(id)) continue
+    const boardUid = bundleBoardUid(id)
+    if (boardUid !== null && !byUid.board.has(boardUid)) continue
+    try {
+      await adapter.deleteFile(entry.fileId)
+    } catch {
+      // Already gone.
+    }
+    delete index.entries[id]
+    result.deleted += 1
+  }
+}
+
+/** Fold the v1 one-file-per-unit layout into bundles, deleting the old files. */
+async function migrateLegacyIndex(
+  adapter: SyncAdapter,
+  index: DriveIndex,
+  result: SyncResult,
+): Promise<void> {
+  // Pull v1 units only: local state reaches the cloud through bundles below.
+  // Snapshot tombstones first — the legacy pull consumes them.
+  const tombstones = await db.deletedEntities.toArray()
+  await reconcileLegacy(adapter, index, result, false)
+
+  index.graves ??= {}
+  for (const pending of tombstones) {
+    index.graves[pending.id] = Math.max(index.graves[pending.id] ?? 0, pending.deletedAt)
+  }
+  const legacy = Object.entries(index.entries).filter(([id]) => !id.startsWith('bundle:'))
+  await runPool(legacy, SYNC_CONCURRENCY, async ([id, entry]) => {
+    if (entry.deletedAt) {
+      index.graves![id] = Math.max(index.graves![id] ?? 0, entry.deletedAt)
+      return
+    }
+    try {
+      await adapter.deleteFile(entry.fileId)
+    } catch {
+      // Already gone.
+    }
+  })
+  for (const [id] of legacy) delete index.entries[id]
+  await db.entitySyncMeta.clear()
+  await db.deletedEntities.clear()
+  index.version = BUNDLE_VERSION
 }
 
 function splitUnitId(id: string): [UnitKind, string] {
@@ -612,10 +1012,9 @@ async function getUnitRow(kind: UnitKind, rowId: number): Promise<BoardRow | Car
 async function putUnitRow(
   kind: UnitKind,
   uid: string,
-  json: string,
+  doc: CloudUnitDoc,
   entryUpdatedAt: number,
 ): Promise<{ id: number; fields: Record<string, unknown> }> {
-  const doc = parseCloudDoc(json)
   const refs = await loadRefMaps()
   const fields = doc.fields
   const fallbackCreated = doc.rowTs || entryUpdatedAt || Date.now()
@@ -678,7 +1077,7 @@ async function putUnitRow(
 }
 
 /** Cloud doc for a unit's row: mergeable fields with uid-translated FKs. */
-function cloudDoc(kind: UnitKind, row: BoardRow | Card | Tag | Workspace, refs: RefMaps): string {
+function unitDoc(kind: UnitKind, row: BoardRow | Card | Tag | Workspace, refs: RefMaps): CloudUnitDoc {
   const raw = row as unknown as Record<string, unknown>
   const fields: Record<string, unknown> = {}
   for (const field of MERGEABLE_FIELDS[kind]) {
@@ -691,8 +1090,11 @@ function cloudDoc(kind: UnitKind, row: BoardRow | Card | Tag | Workspace, refs: 
   const stamps = row.fieldTimestamps ?? {}
   const ts: Record<string, number> = {}
   for (const field of MERGEABLE_FIELDS[kind]) ts[field] = stamps[field] ?? row.updatedAt ?? row.createdAt
-  const doc: CloudUnitDoc = { fields, ts, rowTs: row.updatedAt ?? row.createdAt }
-  return JSON.stringify(doc)
+  return { fields, ts, rowTs: row.updatedAt ?? row.createdAt }
+}
+
+function cloudDoc(kind: UnitKind, row: BoardRow | Card | Tag | Workspace, refs: RefMaps): string {
+  return JSON.stringify(unitDoc(kind, row, refs))
 }
 
 function syncFileName(kind: UnitKind, row: BoardRow | Card | Tag | Workspace): string {

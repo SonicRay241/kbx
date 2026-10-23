@@ -19,6 +19,10 @@ export interface IndexEntry {
 }
 
 export interface DriveIndex {
+  /** 2 = board bundles; absent/1 = legacy one-file-per-unit layout. */
+  version?: 2
+  /** Shared tombstones: unit id (`card:<uid>`, `board:<uid>`, …) → deletedAt. */
+  graves?: Record<string, number>
   entries: Record<string, IndexEntry>
 }
 
