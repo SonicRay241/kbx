@@ -95,7 +95,7 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
           <Input
             value={card.title}
             onChange={e => onUpdateCard(card.id!, { title: e.target.value })}
-            className="border-none bg-transparent px-0 text-base font-semibold shadow-none focus-visible:ring-0 md:text-lg"
+            className="border-none bg-transparent px-0 pr-4 text-base font-semibold shadow-none focus-visible:ring-0 md:text-lg dark:bg-card"
             aria-label="Card title"
           />
           <DialogTitle className="sr-only">{card.title}</DialogTitle>
