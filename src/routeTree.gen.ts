@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as OauthCallbackRouteImport } from './routes/oauth-callback'
+import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as BoardsBoardIdRouteImport } from './routes/boards/$boardId'
 import { Route as BoardsBoardIdIndexRouteImport } from './routes/boards/$boardId/index'
 import { Route as BoardsBoardIdLineageRouteImport } from './routes/boards/$boardId/lineage'
@@ -24,6 +26,16 @@ const IndexRoute = IndexRouteImport.update({
 const OauthCallbackRoute = OauthCallbackRouteImport.update({
   id: '/oauth-callback',
   path: '/oauth-callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
+  id: '/privacy-policy',
+  path: '/privacy-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BoardsBoardIdRoute = BoardsBoardIdRouteImport.update({
@@ -50,6 +62,8 @@ const BoardsBoardIdListRoute = BoardsBoardIdListRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/oauth-callback': typeof OauthCallbackRoute
+  '/privacy-policy': typeof PrivacyPolicyRoute
+  '/terms': typeof TermsRoute
   '/boards/$boardId': typeof BoardsBoardIdRouteWithChildren
   '/boards/$boardId/lineage': typeof BoardsBoardIdLineageRoute
   '/boards/$boardId/list': typeof BoardsBoardIdListRoute
@@ -58,6 +72,8 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/oauth-callback': typeof OauthCallbackRoute
+  '/privacy-policy': typeof PrivacyPolicyRoute
+  '/terms': typeof TermsRoute
   '/boards/$boardId/lineage': typeof BoardsBoardIdLineageRoute
   '/boards/$boardId/list': typeof BoardsBoardIdListRoute
   '/boards/$boardId': typeof BoardsBoardIdIndexRoute
@@ -66,6 +82,8 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/oauth-callback': typeof OauthCallbackRoute
+  '/privacy-policy': typeof PrivacyPolicyRoute
+  '/terms': typeof TermsRoute
   '/boards/$boardId': typeof BoardsBoardIdRouteWithChildren
   '/boards/$boardId/lineage': typeof BoardsBoardIdLineageRoute
   '/boards/$boardId/list': typeof BoardsBoardIdListRoute
@@ -76,6 +94,8 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/oauth-callback'
+    | '/privacy-policy'
+    | '/terms'
     | '/boards/$boardId'
     | '/boards/$boardId/lineage'
     | '/boards/$boardId/list'
@@ -84,6 +104,8 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/oauth-callback'
+    | '/privacy-policy'
+    | '/terms'
     | '/boards/$boardId/lineage'
     | '/boards/$boardId/list'
     | '/boards/$boardId'
@@ -91,6 +113,8 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/oauth-callback'
+    | '/privacy-policy'
+    | '/terms'
     | '/boards/$boardId'
     | '/boards/$boardId/lineage'
     | '/boards/$boardId/list'
@@ -100,6 +124,8 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   OauthCallbackRoute: typeof OauthCallbackRoute
+  PrivacyPolicyRoute: typeof PrivacyPolicyRoute
+  TermsRoute: typeof TermsRoute
   BoardsBoardIdRoute: typeof BoardsBoardIdRouteWithChildren
 }
 
@@ -117,6 +143,20 @@ declare module '@tanstack/react-router' {
       path: '/oauth-callback'
       fullPath: '/oauth-callback'
       preLoaderRoute: typeof OauthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy-policy': {
+      id: '/privacy-policy'
+      path: '/privacy-policy'
+      fullPath: '/privacy-policy'
+      preLoaderRoute: typeof PrivacyPolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/boards/$boardId': {
@@ -169,6 +209,8 @@ const BoardsBoardIdRouteWithChildren = BoardsBoardIdRoute._addFileChildren(
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   OauthCallbackRoute: OauthCallbackRoute,
+  PrivacyPolicyRoute: PrivacyPolicyRoute,
+  TermsRoute: TermsRoute,
   BoardsBoardIdRoute: BoardsBoardIdRouteWithChildren,
 }
 export const routeTree = rootRouteImport
