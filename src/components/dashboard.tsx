@@ -83,13 +83,33 @@ export function Dashboard() {
   if (!stats) return null;
 
   if (stats.perBoard.length === 0) {
+    // Empty workspace = the app's front door. This is also what a reviewer
+    // sees, so it explains what kbx is rather than just showing an empty grid.
     return (
-      <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-3">
-        <p className="text-sm">Select a board</p>
-        <Button variant="outline" size="sm" onClick={() => create.open()}>
-          <PlusIcon />
-          New board
-        </Button>
+      <div className="mx-auto flex h-full w-full max-w-xl flex-col justify-center gap-5 px-6 pb-16">
+        <div>
+          <h1 className="text-xl font-medium">kbx</h1>
+          <p className="text-muted-foreground mt-2 text-sm">
+            kbx is a local-first kanban board for tasks, tags, and task lineage. Boards live
+            in this browser and, if you connect sync, in your own Google Drive or WebDAV
+            server — no accounts, no analytics, nothing sent to us.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm" onClick={() => create.open()}>
+            <PlusIcon />
+            New board
+          </Button>
+          <p className="text-muted-foreground text-xs">
+            <Link to="/privacy-policy" className="hover:text-foreground underline underline-offset-2">
+              Privacy Policy
+            </Link>{' '}
+            ·{' '}
+            <Link to="/terms" className="hover:text-foreground underline underline-offset-2">
+              Terms of Service
+            </Link>
+          </p>
+        </div>
       </div>
     );
   }
@@ -97,7 +117,7 @@ export function Dashboard() {
   return (
     <div className="grid h-full min-h-0 w-full gap-4 px-4 pt-4">
       <div className="flex min-h-0 flex-col gap-4 pb-4">
-        <h1 className="text-xl font-medium pl-8 md:pl-0">Tasks overview</h1>
+        <h1 className="pl-8 text-xl font-medium md:pl-0">Tasks overview</h1>
 
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 w-full">
           <div className="col-span-2">

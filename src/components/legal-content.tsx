@@ -191,6 +191,12 @@ export function LegalContent({ doc }: { doc: LegalDoc }) {
 export function LegalPage({ title, doc }: { title: string; doc: LegalDoc }) {
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-8">
+      <a
+        href="/"
+        className="text-muted-foreground hover:text-foreground mb-4 inline-block text-xs tracking-widest uppercase"
+      >
+        ← Back to kbx
+      </a>
       <h1 className="text-lg font-semibold">{title}</h1>
       <p className="text-muted-foreground mt-1 text-sm">Last updated: {LEGAL_LAST_UPDATED}</p>
       <div className="text-muted-foreground mt-4 space-y-4 text-sm">

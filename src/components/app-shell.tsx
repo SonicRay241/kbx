@@ -66,12 +66,12 @@ export function AppShell({ children }: { children: ReactNode }) {
   const createBoard = () => {
     const name = newName.trim();
     if (!name) return;
-    void createBoardRow(name, DEFAULT_COLUMNS).then((id) => {
+    void createBoardRow(name, DEFAULT_COLUMNS).then((board) => {
       setNewName("");
       setCreateOpen(false);
       void navigate({
         to: "/boards/$boardId",
-        params: { boardId: String(id) },
+        params: { boardId: String(board.id) },
       });
     });
   };
