@@ -13,7 +13,7 @@ import {
   type Node,
   type NodeProps,
 } from "@xyflow/react";
-import { SearchIcon } from "lucide-react";
+import { SearchIcon, SquareKanbanIcon } from "lucide-react";
 
 import { archivedCardIds, db, type BoardRow, type Card, type Tag } from "@/lib/db";
 import { requestCardHighlight } from "@/lib/card-highlight";
@@ -40,6 +40,17 @@ type PreviewData = {
   root: boolean;
 };
 type PreviewNode = Node<PreviewData, "preview">;
+
+type SearchRow =
+  | { kind: "board"; key: string; board: BoardRow }
+  | {
+      kind: "card";
+      key: string;
+      card: Card;
+      board: BoardRow;
+      status: { label: string; className: string };
+      archived: boolean;
+    };
 
 function PreviewCard({ data }: NodeProps<PreviewNode>) {
   return (
@@ -98,7 +109,7 @@ function FitPreview() {
 export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
-  const [previewId, setPreviewId] = useState<number | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const boards = useLiveQuery(() => db.boards.toArray(), [], []);
   const cards = useLiveQuery(() => db.cards.toArray(), [], []);
   const tags = useLiveQuery(() => db.tags.toArray(), [], []);
@@ -114,7 +125,17 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     return { label: board.columns[index]?.title ?? column, className: softAccentBadge(index) };
   };
 
-  const results = useMemo(() => {
+  // Boards are matched by name and listed above tasks; the group disappears
+  // entirely when nothing matches, so tasks keep the whole panel.
+  const boardMatches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return boards
+      .filter((board) => board.name.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [boards, query]);
+
+  const cardRows = useMemo(() => {
     const q = query.trim().toLowerCase();
     const matched = cards.flatMap((card) => {
       const board = boardById.get(card.boardId);
@@ -131,7 +152,12 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     const finished = (row: (typeof pool)[number]) =>
       row.card.column === row.board.columns[row.board.columns.length - 1]?.id;
     return pool
-      .map((row) => ({ ...row, status: statusOf(row.board, row.card.column) }))
+      .map((row) => ({
+        kind: "card" as const,
+        key: `card:${row.card.id}`,
+        ...row,
+        status: statusOf(row.board, row.card.column),
+      }))
       .sort(
         (a, b) =>
           // Completed work is rarely what you are looking for — sink it.
@@ -144,17 +170,30 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cards, query, boardById]);
 
+  const rows = useMemo<SearchRow[]>(
+    () => [
+      ...boardMatches.map((board) => ({ kind: "board" as const, key: `board:${board.id}`, board })),
+      ...cardRows,
+    ],
+    [boardMatches, cardRows],
+  );
+
   // Search-bar state change → select the first result. Hovering moves the
   // selection; leaving the row keeps it, so the preview stays put.
   useEffect(() => {
-    setPreviewId(results[0]?.card.id ?? null);
-  }, [query, results]);
+    setSelectedKey(rows[0]?.key ?? null);
+  }, [query, rows]);
+
+  const selected = rows.find((row) => row.key === selectedKey) ?? null;
+  const selectedCard = selected?.kind === "card" ? selected.card : null;
+  const selectedBoard = selected?.kind === "board" ? selected.board : null;
 
   // Every match came from the archive bucket — local history may be behind.
-  const archiveFallback = results.length > 0 && results.every((row) => row.archived);
+  const archiveFallback =
+    cardRows.length > 0 && cardRows.every((row) => row.archived) && boardMatches.length === 0;
 
   const graph = useMemo(() => {
-    const card = previewId === null ? null : cardById.get(previewId);
+    const card = selectedCard;
     if (!card) return null;
     const board = boardById.get(card.boardId);
     if (!board) return null;
@@ -200,29 +239,33 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
 
     return { nodes, edges };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [previewId, cardById, boardById, tagById, cards]);
+  }, [selectedCard, cardById, boardById, tagById, cards]);
 
-  const jump = (card: Card) => {
+  const openBoard = (boardId: number) => {
     onOpenChange(false);
     setQuery("");
-    setPreviewId(null);
-    // The board consumes this on mount and flashes the card into view.
-    requestCardHighlight(card.boardId, card.id);
-    void navigate({ to: "/boards/$boardId", params: { boardId: String(card.boardId) } });
+    setSelectedKey(null);
+    void navigate({ to: "/boards/$boardId", params: { boardId: String(boardId) } });
   };
 
-  // Keyboard preview: arrows walk the list (wrapping), Enter opens the selected
-  // card. Registered locally so these keys never reach the global registry.
+  const jump = (card: Card) => {
+    // The board flashes this card once it renders (or right away if already open).
+    requestCardHighlight(card.boardId, card.id);
+    openBoard(card.boardId);
+  };
+
+  // Keyboard preview: arrows walk boards then tasks (wrapping), Enter opens the
+  // selection. Registered locally so these keys never reach the global registry.
   const step = (delta: number) => {
-    if (!results.length) return;
-    const index = results.findIndex((row) => row.card.id === previewId);
+    if (!rows.length) return;
+    const index = rows.findIndex((row) => row.key === selectedKey);
     const next =
       index === -1
         ? delta > 0
           ? 0
-          : results.length - 1
-        : (index + delta + results.length) % results.length;
-    setPreviewId(results[next].card.id);
+          : rows.length - 1
+        : (index + delta + rows.length) % rows.length;
+    setSelectedKey(rows[next].key);
     // Keyboard navigation may move the selection out of view; hover never does.
     requestAnimationFrame(() => {
       document
@@ -236,8 +279,9 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
       arrowdown: () => step(1),
       arrowup: () => step(-1),
       enter: () => {
-        const card = results.find((row) => row.card.id === previewId)?.card;
-        if (card) jump(card);
+        if (!selected) return;
+        if (selected.kind === "board") openBoard(selected.board.id!);
+        else jump(selected.card);
       },
     },
     open,
@@ -250,12 +294,12 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
         onOpenChange(next);
         if (!next) {
           setQuery("");
-          setPreviewId(null);
+          setSelectedKey(null);
         }
       }}
     >
       <DialogContent className="grid h-[min(44rem,calc(100vh-4rem))] min-h-[24rem] max-w-5xl grid-cols-[minmax(0,26rem)_1fr] gap-0 overflow-hidden p-0 sm:max-w-5xl">
-        <DialogTitle className="sr-only">Search tasks</DialogTitle>
+        <DialogTitle className="sr-only">Search boards and tasks</DialogTitle>
         <div className="flex min-h-0 flex-col border-r">
           <div className="relative border-b p-3">
             <SearchIcon className="text-muted-foreground pointer-events-none absolute top-1/2 left-5 size-4 -translate-y-1/2" />
@@ -263,8 +307,8 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
               autoFocus
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search tasks…"
-              aria-label="Search tasks"
+              placeholder="Search boards and tasks…"
+              aria-label="Search boards and tasks"
               className="h-9 border-0 bg-transparent pl-8 shadow-none focus-visible:ring-0"
             />
           </div>
@@ -275,40 +319,91 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             </div>
           )}
           <div className="min-h-0 flex-1 overflow-auto p-2">
-            {results.length === 0 ? (
-              <p className="text-muted-foreground p-3 text-sm">No tasks match.</p>
+            {rows.length === 0 ? (
+              <p className="text-muted-foreground p-3 text-sm">No matches.</p>
             ) : (
-              <ul className="flex flex-col gap-0.5">
-                {results.map(({ card, board, status }) => (
-                  <li key={card.id}>
-                    <button
-                      type="button"
-                      onMouseEnter={() => setPreviewId(card.id)}
-                      onFocus={() => setPreviewId(card.id)}
-                      onClick={() => jump(card)}
-                      aria-current={previewId === card.id}
-                      className={`hover:bg-accent focus-visible:bg-accent flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left outline-hidden ${
-                        previewId === card.id ? "bg-accent" : ""
-                      }`}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">
-                          <Highlight text={card.title} query={query} />
-                        </span>
-                        {card.description && (
-                          <span className="text-muted-foreground line-clamp-2 text-xs">
-                            <Highlight text={card.description} query={query} />
-                          </span>
-                        )}
-                        <span className="text-muted-foreground mt-1 block truncate text-xs">{board.name}</span>
-                      </span>
-                      <Badge variant="outline" className={`shrink-0 rounded ${status.className}`}>
-                        {status.label}
-                      </Badge>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              <div className="flex flex-col gap-0.5">
+                {boardMatches.length > 0 && (
+                  <section>
+                    <h3 className="text-muted-foreground px-2.5 pt-1 pb-1 text-[11px] tracking-widest uppercase">
+                      Boards
+                    </h3>
+                    <ul className="flex flex-col gap-0.5">
+                      {boardMatches.map((board) => {
+                        const key = `board:${board.id}`;
+                        const active = selectedKey === key;
+                        return (
+                          <li key={key}>
+                            <button
+                              type="button"
+                              onMouseEnter={() => setSelectedKey(key)}
+                              onFocus={() => setSelectedKey(key)}
+                              onClick={() => openBoard(board.id!)}
+                              aria-current={active}
+                              className={`hover:bg-accent focus-visible:bg-accent flex w-full items-center gap-3 rounded-md px-2.5 py-2 text-left outline-hidden ${
+                                active ? "bg-accent" : ""
+                              }`}
+                            >
+                              <SquareKanbanIcon className="text-muted-foreground size-4 shrink-0" />
+                              <span className="min-w-0 flex-1 truncate text-sm font-medium">
+                                <Highlight text={board.name} query={query} />
+                              </span>
+                              <span className="text-muted-foreground shrink-0 text-xs">
+                                {cards.filter((card) => card.boardId === board.id).length} tasks
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                )}
+                {cardRows.length > 0 && (
+                  <section className={boardMatches.length > 0 ? "mt-1" : undefined}>
+                    {boardMatches.length > 0 && (
+                      <h3 className="text-muted-foreground px-2.5 pt-1 pb-1 text-[11px] tracking-widest uppercase">
+                        Tasks
+                      </h3>
+                    )}
+                    <ul className="flex flex-col gap-0.5">
+                      {cardRows.map(({ key, card, board, status }) => {
+                        const active = selectedKey === key;
+                        return (
+                          <li key={key}>
+                            <button
+                              type="button"
+                              onMouseEnter={() => setSelectedKey(key)}
+                              onFocus={() => setSelectedKey(key)}
+                              onClick={() => jump(card)}
+                              aria-current={active}
+                              className={`hover:bg-accent focus-visible:bg-accent flex w-full items-start gap-3 rounded-md px-2.5 py-2 text-left outline-hidden ${
+                                active ? "bg-accent" : ""
+                              }`}
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-medium">
+                                  <Highlight text={card.title} query={query} />
+                                </span>
+                                {card.description && (
+                                  <span className="text-muted-foreground line-clamp-2 text-xs">
+                                    <Highlight text={card.description} query={query} />
+                                  </span>
+                                )}
+                                <span className="text-muted-foreground mt-1 block truncate text-xs">
+                                  {board.name}
+                                </span>
+                              </span>
+                              <Badge variant="outline" className={`shrink-0 rounded ${status.className}`}>
+                                {status.label}
+                              </Badge>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -317,7 +412,7 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
           {graph ? (
             <ReactFlowProvider>
               <ReactFlow
-                key={previewId}
+                key={selectedCard?.id}
                 nodes={graph.nodes}
                 edges={graph.edges}
                 nodeTypes={nodeTypes}
@@ -333,6 +428,15 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
                 <FitPreview />
               </ReactFlow>
             </ReactFlowProvider>
+          ) : selectedBoard ? (
+            <div className="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center">
+              <p className="text-sm font-medium">{selectedBoard.name}</p>
+              <p className="text-muted-foreground text-xs">
+                {cards.filter((card) => card.boardId === selectedBoard.id).length} tasks ·{" "}
+                {selectedBoard.columns.length} columns
+              </p>
+              <p className="text-muted-foreground mt-1 text-xs">Press Enter to open this board.</p>
+            </div>
           ) : (
             <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
               Hover to view lineage
