@@ -119,7 +119,7 @@ export function SyncPanel() {
               </Button>
             </div>
           )}
-          <div className="text-muted-foreground mt-1 flex items-center gap-1.5 border-t pt-2 text-[11px]">
+          <div className="text-muted-foreground mt-2 flex items-center gap-1.5 border-t pt-2 text-[11px]">
             <a href="#privacy-policy" className="hover:text-foreground underline-offset-2 hover:underline">
               Privacy Policy
             </a>
