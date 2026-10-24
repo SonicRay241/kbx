@@ -3,6 +3,7 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/sonner'
 import { AppShell } from '@/components/app-shell'
 import { SyncToastBridge } from '@/components/sync/sync-toast'
+import { LegalHashDialog } from '@/components/legal-dialog'
 
 export const Route = createRootRoute({
   component: () => (
@@ -11,6 +12,7 @@ export const Route = createRootRoute({
         <Outlet />
       </AppShell>
       <SyncToastBridge />
+      <LegalHashDialog />
       <Toaster />
     </TooltipProvider>
   ),
