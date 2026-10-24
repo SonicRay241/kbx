@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -429,14 +429,7 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
               </ReactFlow>
             </ReactFlowProvider>
           ) : selectedBoard ? (
-            <div className="flex h-full flex-col items-center justify-center gap-1.5 p-6 text-center">
-              <p className="text-sm font-medium">{selectedBoard.name}</p>
-              <p className="text-muted-foreground text-xs">
-                {cards.filter((card) => card.boardId === selectedBoard.id).length} tasks ·{" "}
-                {selectedBoard.columns.length} columns
-              </p>
-              <p className="text-muted-foreground mt-1 text-xs">Press Enter to open this board.</p>
-            </div>
+            <BoardPreview board={selectedBoard} cards={cards} />
           ) : (
             <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
               Hover to view lineage
@@ -446,4 +439,27 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
       </DialogContent>
     </Dialog>
   );
+}
+
+/** Board selection preview: name plus how much sits in each column. */
+function BoardPreview({ board, cards }: { board: BoardRow; cards: Card[] }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center p-6">
+      <div>
+        <p className="text-sm font-medium">{board.name}</p>
+        {/* Numbers hug the longest label instead of the panel edge. */}
+        <dl className="mt-3 grid grid-cols-[max-content_max-content] gap-x-2 gap-y-1 text-xs">
+          {board.columns.map((column) => (
+            <Fragment key={column.id}>
+              <dt className="text-muted-foreground">{column.title}:</dt>
+              <dd className="tabular-nums">
+                {cards.filter((card) => card.boardId === board.id && card.column === column.id).length}
+              </dd>
+            </Fragment>
+          ))}
+        </dl>
+        <p className="text-muted-foreground mt-4 text-xs">Press Enter to open this board.</p>
+      </div>
+    </div>
+  )
 }
