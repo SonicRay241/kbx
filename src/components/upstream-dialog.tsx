@@ -130,7 +130,7 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
               onChange={e => onUpdateCard(card.id!, { description: e.target.value })}
               placeholder="Add a more detailed description…"
               aria-label="Description"
-              className="bg-muted max-h-48 min-h-24 resize-none overflow-y-auto border-0"
+              className="bg-muted max-h-48 min-h-24 resize-none overflow-y-auto border-0 focus-visible:ring-0"
             />
           </section>
 
