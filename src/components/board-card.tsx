@@ -17,6 +17,8 @@ interface BoardCardProps extends Omit<
   finishedColumnId: string;
   isOverlay?: boolean;
   onEdit?: (id: number) => void;
+  /** Just arrived from search — draw attention for a moment. */
+  highlighted?: boolean;
 }
 
 type TaskCardProps = {
@@ -28,6 +30,8 @@ type TaskCardProps = {
   status?: { label: string; className?: string };
   isOverlay?: boolean;
   onEdit?: (id: number) => void;
+  /** Just arrived from search — draw attention for a moment. */
+  highlighted?: boolean;
 };
 
 export function TaskCard({
@@ -130,6 +134,7 @@ export function BoardCard({
   finishedColumnId,
   isOverlay,
   onEdit,
+  highlighted,
   ...props
 }: BoardCardProps) {
   const inner = (
@@ -147,7 +152,15 @@ export function BoardCard({
     // Blocked cards still drag — dropping one into the finished column is vetoed
     // by the board (see `isDropVetoed`), so it just animates back.
     <KanbanItem value={String(card.id)} {...props}>
-      {isOverlay ? inner : <KanbanItemHandle>{inner}</KanbanItemHandle>}
+      {isOverlay ? (
+        inner
+      ) : (
+        <KanbanItemHandle
+          className={cn(highlighted && "ring-primary rounded-xl ring-2 transition-shadow")}
+        >
+          {inner}
+        </KanbanItemHandle>
+      )}
     </KanbanItem>
   );
 }

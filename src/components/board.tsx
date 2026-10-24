@@ -20,6 +20,7 @@ import { BoardCard } from '@/components/board-card'
 import { UpstreamDialog } from '@/components/upstream-dialog'
 import { useShortcut } from '@/lib/shortcuts'
 import { subscribeSyncApplied } from '@/sync/sync-engine'
+import { subscribeCardHighlight } from '@/lib/card-highlight'
 import { ColumnsDialog } from '@/components/columns-dialog'
 import { ArchiveDialog } from '@/components/archive-dialog'
 import { Switch } from '@/components/ui/switch'
@@ -44,6 +45,7 @@ interface BoardColumnProps extends Omit<ComponentProps<typeof KanbanColumn>, 'ch
   tagById: Map<number, Tag>
   finishedColumnId: string
   blockedByUpstream: (id: number) => boolean
+  highlightId?: number | null
   onCardClick: (id: number) => void
   onAdd: (column: string) => void
   overlay?: boolean
@@ -57,6 +59,7 @@ function BoardColumn({
   tagById,
   finishedColumnId,
   blockedByUpstream,
+  highlightId,
   onCardClick,
   onAdd,
   overlay,
@@ -103,7 +106,15 @@ function BoardColumn({
         </div>
         <KanbanColumnContent value={column.id} className="mt-2 min-h-80 gap-2.5">
           {cards.map(card => (
-            <BoardCard key={String(card.id)} card={card} cardById={cardById} tagById={tagById} finishedColumnId={finishedColumnId} onEdit={overlay ? undefined : onCardClick} />
+            <BoardCard
+              key={String(card.id)}
+              card={card}
+              cardById={cardById}
+              tagById={tagById}
+              finishedColumnId={finishedColumnId}
+              highlighted={card.id === highlightId}
+              onEdit={overlay ? undefined : onCardClick}
+            />
           ))}
         </KanbanColumnContent>
       </div>
@@ -140,6 +151,8 @@ export function Board({ boardId }: { boardId: number }) {
   const [columnsOpen, setColumnsOpen] = useState(false)
   const [archiveOpen, setArchiveOpen] = useState(false)
   const [hideBlocked, setHideBlocked] = useState(false)
+  // Card to flash after arriving from search (one-shot, set by the dialog).
+  const [highlightId, setHighlightId] = useState<number | null>(null)
   const [confirm, setConfirm] = useState<{ title: string; description: string; action: () => void } | null>(null)
 
   const columns = board?.columns?.length ? board.columns : DEFAULT_COLUMNS
@@ -200,6 +213,30 @@ export function Board({ boardId }: { boardId: number }) {
     pendingSyncRefresh.current = false
     void reload()
   }
+
+  // Fires immediately when this board is already open, or on mount when the
+  // search navigated here — either way the request is one-shot.
+  useEffect(
+    // oxlint-disable-next-line react/set-state-in-effect
+    () => subscribeCardHighlight(boardId, (id) => setHighlightId(id)),
+    [boardId],
+  )
+
+  // Armed separately: consumption is one-shot, so a cleanup here must not be
+  // able to cancel the only timer that ever clears the ring.
+  useEffect(() => {
+    if (highlightId === null) return
+    const timer = window.setTimeout(() => setHighlightId(null), 2600)
+    return () => window.clearTimeout(timer)
+  }, [highlightId])
+
+  // The card only exists once the board data lands, so track `cards` too.
+  useEffect(() => {
+    if (highlightId === null) return
+    document
+      .querySelector<HTMLElement>(`[data-slot="kanban-item"][data-value="${highlightId}"]`)
+      ?.scrollIntoView({ block: "center", behavior: "smooth" })
+  }, [highlightId, cards])
 
   const blockedByUpstream = (id: number) => blockedIds.has(id)
 
@@ -474,6 +511,7 @@ export function Board({ boardId }: { boardId: number }) {
                 tagById={tagById}
                 finishedColumnId={finishedColumnId}
                 blockedByUpstream={blockedByUpstream}
+                highlightId={highlightId}
                 onCardClick={setDialogCardId}
                 onAdd={handleAddCard}
               />

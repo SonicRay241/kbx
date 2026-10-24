@@ -16,6 +16,7 @@ import {
 import { SearchIcon } from "lucide-react";
 
 import { archivedCardIds, db, type BoardRow, type Card, type Tag } from "@/lib/db";
+import { requestCardHighlight } from "@/lib/card-highlight";
 import { useLocalShortcut } from "@/lib/shortcuts";
 import { SyncArchivesButton } from "@/components/sync/sync-archives-button";
 import { TaskCard } from "@/components/board-card";
@@ -205,6 +206,8 @@ export function SearchDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     onOpenChange(false);
     setQuery("");
     setPreviewId(null);
+    // The board consumes this on mount and flashes the card into view.
+    requestCardHighlight(card.boardId, card.id);
     void navigate({ to: "/boards/$boardId", params: { boardId: String(card.boardId) } });
   };
 
