@@ -2,7 +2,9 @@ import { useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useLiveQuery } from "dexie-react-hooks";
 import { SearchIcon } from "lucide-react";
-import { db, type Card } from "@/lib/db";
+import { archivedCardIds, db, type Card } from "@/lib/db";
+import { deleteCard, updateCard } from "@/lib/mutations";
+import { UpstreamDialog } from "@/components/upstream-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { BoardHeaderSlot } from "@/routes/boards/$boardId";
@@ -36,6 +38,14 @@ function BoardList({ boardId }: { boardId: number }) {
   const cards = useLiveQuery(() =>
     db.cards.where("boardId").equals(boardId).toArray(),
   );
+  const tags = useLiveQuery(() =>
+    db.tags.where("boardId").equals(boardId).toArray(),
+  );
+  const [openCardId, setOpenCardId] = useState<number | null>(null);
+
+  // Archived cards open the same task modal, read-only.
+  const archived = useMemo(() => archivedCardIds(board, cards ?? []), [board, cards]);
+  const openCard = cards?.find((card) => card.id === openCardId) ?? null;
 
   const rows = useMemo(() => {
     if (!board || !cards) return [];
@@ -94,7 +104,18 @@ function BoardList({ boardId }: { boardId: number }) {
         </TableHeader>
         <TableBody>
           {rows.map((card) => (
-            <TableRow key={card.id}>
+            <TableRow
+              key={card.id}
+              tabIndex={0}
+              aria-label={`Open ${card.title}`}
+              onClick={() => setOpenCardId(card.id)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                setOpenCardId(card.id);
+              }}
+              className="hover:bg-muted/50 focus-visible:bg-muted/50 cursor-pointer outline-hidden"
+            >
               <TableCell className="font-medium">{card.title}</TableCell>
               <TableCell>
                 <Badge
@@ -118,6 +139,24 @@ function BoardList({ boardId }: { boardId: number }) {
         <p className="text-muted-foreground py-4 text-sm">
           {query ? "No tasks match." : "No tasks on this board yet."}
         </p>
+      )}
+      {openCard && (
+        <UpstreamDialog
+          cardId={openCard.id}
+          cards={cards ?? []}
+          columns={board.columns}
+          tags={tags ?? []}
+          readOnly={archived.has(openCard.id)}
+          open
+          onOpenChange={(next) => {
+            if (!next) setOpenCardId(null);
+          }}
+          onTagCreated={() => {}}
+          usedTagIds={(cards ?? []).flatMap((card) => card.tagIds)}
+          onUnusedTagsDeleted={() => {}}
+          onUpdateCard={(id, changes) => void updateCard(id, changes)}
+          onDeleteCard={(id) => void deleteCard(id)}
+        />
       )}
     </div>
   );

@@ -29,9 +29,11 @@ interface UpstreamDialogProps {
   /** Write-through updates so the board's local state is the single render truth. */
   onUpdateCard: (id: number, changes: Partial<CardData>) => void
   onDeleteCard: (id: number) => void
+  /** Archived cards open the same modal, read-only: no edits, no delete. */
+  readOnly?: boolean
 }
 
-export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, usedTagIds, onUnusedTagsDeleted, open, onOpenChange, onUpdateCard, onDeleteCard }: UpstreamDialogProps) {
+export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, usedTagIds, onUnusedTagsDeleted, open, onOpenChange, onUpdateCard, onDeleteCard, readOnly = false }: UpstreamDialogProps) {
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const card = cards.find(c => c.id === cardId)
@@ -94,28 +96,52 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
         <DialogHeader className="gap-2 border-b pb-4">
           <Input
             value={card.title}
+            readOnly={readOnly}
             onChange={e => onUpdateCard(card.id!, { title: e.target.value })}
             className="border-none bg-transparent px-0 pr-4 text-base font-semibold shadow-none focus-visible:ring-0 md:text-lg dark:bg-card"
             aria-label="Card title"
           />
           <DialogTitle className="sr-only">{card.title}</DialogTitle>
-          <div className="text-muted-foreground text-xs">
-            in list{' '}
-            <span className="text-foreground font-medium underline decoration-border underline-offset-2">
-              {columnTitle(card.column)}
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-muted-foreground">
+              in list{' '}
+              <span className="text-foreground font-medium underline decoration-border underline-offset-2">
+                {columnTitle(card.column)}
+              </span>
             </span>
+            {readOnly && (
+              <span className="text-muted-foreground ring-border rounded px-1.5 py-0.5 text-[11px] uppercase tracking-wide ring-1">
+                Archived · read-only
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <span className="text-muted-foreground text-[11px] font-semibold tracking-wide uppercase">Labels</span>
-            <TagsCombobox
-              boardId={card.boardId}
-              tags={tags}
-              onTagCreated={onTagCreated}
-              usedTagIds={usedTagIds}
-              onUnusedTagsDeleted={onUnusedTagsDeleted}
-              selected={card.tagIds}
-              onChange={tagIds => onUpdateCard(card.id!, { tagIds })}
-            />
+            {readOnly ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {card.tagIds.length === 0 ? (
+                  <span className="text-muted-foreground text-xs">None</span>
+                ) : (
+                  tags
+                    .filter(tag => card.tagIds.includes(tag.id!))
+                    .map(tag => (
+                      <span key={tag.id} className={cn('rounded px-2 py-0.5 text-xs', tag.color)}>
+                        {tag.name}
+                      </span>
+                    ))
+                )}
+              </div>
+            ) : (
+              <TagsCombobox
+                boardId={card.boardId}
+                tags={tags}
+                onTagCreated={onTagCreated}
+                usedTagIds={usedTagIds}
+                onUnusedTagsDeleted={onUnusedTagsDeleted}
+                selected={card.tagIds}
+                onChange={tagIds => onUpdateCard(card.id!, { tagIds })}
+              />
+            )}
           </div>
         </DialogHeader>
 
@@ -127,8 +153,9 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
             </h3>
             <Textarea
               value={card.description ?? ''}
+              readOnly={readOnly}
               onChange={e => onUpdateCard(card.id!, { description: e.target.value })}
-              placeholder="Add a more detailed description…"
+              placeholder={readOnly ? 'No description.' : 'Add a more detailed description…'}
               aria-label="Description"
               className="bg-muted max-h-48 min-h-24 resize-none overflow-y-auto border-0 focus-visible:ring-0"
             />
@@ -140,16 +167,18 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
                 <GitBranchIcon className="text-muted-foreground size-4" />
                 Upstream
               </h3>
-              <TaskSelector
-                cards={cards.filter(c => c.id !== card.id)}
-                selected={upstreamIds}
-                disabledIds={blockedIds}
-                onToggle={toggleUpstream}
-                onSelectAll={() => onUpdateCard(card.id!, { upstreamIds: [...card.upstreamIds, ...addable.map(c => c.id!)] })}
-                columnTitle={columnTitle}
-                triggerLabel={upstreams.length ? `${upstreams.length} selected` : 'Add upstream'}
-                triggerClassName="w-40 justify-between"
-              />
+              {!readOnly && (
+                <TaskSelector
+                  cards={cards.filter(c => c.id !== card.id)}
+                  selected={upstreamIds}
+                  disabledIds={blockedIds}
+                  onToggle={toggleUpstream}
+                  onSelectAll={() => onUpdateCard(card.id!, { upstreamIds: [...card.upstreamIds, ...addable.map(c => c.id!)] })}
+                  columnTitle={columnTitle}
+                  triggerLabel={upstreams.length ? `${upstreams.length} selected` : 'Add upstream'}
+                  triggerClassName="w-40 justify-between"
+                />
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -167,14 +196,16 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
                     <span className={cn('flex h-5 items-center rounded px-2 text-xs', badgeFor(u.column))}>
                       {columnTitle(u.column)}
                     </span>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Remove upstream ${u.title}`}
-                      onClick={() => toggleUpstream(u.id!)}
-                    >
-                      <XIcon />
-                    </Button>
+                    {!readOnly && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        aria-label={`Remove upstream ${u.title}`}
+                        onClick={() => toggleUpstream(u.id!)}
+                      >
+                        <XIcon />
+                      </Button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -182,11 +213,13 @@ export function UpstreamDialog({ cardId, cards, columns, tags, onTagCreated, use
           </section>
         </div>
 
-        <div className="flex justify-end border-t pt-4">
-          <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
-            Delete card
-          </Button>
-        </div>
+        {!readOnly && (
+          <div className="flex justify-end border-t pt-4">
+            <Button variant="destructive" onClick={() => setConfirmDelete(true)}>
+              Delete card
+            </Button>
+          </div>
+        )}
 
         <ConfirmDialog
           open={confirmDelete}
